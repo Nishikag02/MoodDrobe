@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Environment variables
+.env
+.env.*
+
+# Datasets and generated ML files
+data/raw/
+data/processed/
+*.npy
+*.npz
+*.pkl
+*.pt
+*.pth
+
+# IDE
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

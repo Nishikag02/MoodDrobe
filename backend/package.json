@@ -24,6 +24,7 @@
   },
   "type": "module",
   "devDependencies": {
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^26.4.0",
     "@types/pg": "^8.23.1",
@@ -32,7 +33,10 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
+    "@better-auth/infra": "^0.4.5",
+    "@ngrok/ngrok": "^1.7.0",
     "better-auth": "^1.7.2",
+    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "drizzle-orm": "0.45.2",
     "express": "^5.2.1",

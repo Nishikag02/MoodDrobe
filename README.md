@@ -8,8 +8,8 @@ fashion inspiration into personalized outfit recommendations.
 
 ## Team
 
-- Member 1
-- Member 2
+- Kartik Gupta (1024031031)
+- Nishika Gupta (1024031036)
 
 ## Status
 

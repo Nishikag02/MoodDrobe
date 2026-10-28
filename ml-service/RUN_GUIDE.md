@@ -17,6 +17,20 @@ varied and include pieces that pair with what was uploaded. Two small models
 trained on your saved vectors add the garment category and attributes
 (floral, denim, sleeveless and so on).
 
+## Fastest way: one script
+
+From `ml-service`, this runs steps 0 to 6 below in order and stops at the first problem:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_and_run.ps1
+```
+
+Options: `-LocalQdrant` (no Docker), `-SkipEval`, `-NoServer`. When the
+API is up, open a second window and run `python -m scripts.smoke_test_api`.
+It sends a real test photo and two vibes, then prints what comes back.
+
+The steps below are the same thing done by hand.
+
 ## 0. Open the project
 
 ```powershell

@@ -22,7 +22,7 @@ ML_ROOT = Path(__file__).resolve().parent.parent
 if str(ML_ROOT) not in sys.path:
     sys.path.insert(0, str(ML_ROOT))
 
-from vectordb import catalogue, config, store  # noqa: E402
+from vectordb import catalogue, config, garments, store  # noqa: E402
 
 PAYLOAD_FIELDS = ("product_id", "image_path", "category", "subcategory", "color", "pattern", "source", "dataset_split")
 
@@ -68,10 +68,15 @@ def main() -> int:
                 failed.append(f"{key}: {'; '.join(ch.errors)}")
                 print(f"  SKIP  {key}: {'; '.join(ch.errors)}")
                 continue
-            payloads = [
-                {**{k: products[pid].get(k) for k in PAYLOAD_FIELDS}, "embedding_chunk": key}
-                for pid in ch.ids
-            ]
+            payloads = []
+            for pid in ch.ids:
+                p = {k: products[pid].get(k) for k in PAYLOAD_FIELDS}
+                name = garments.category_name(p.get("category"))
+                p["category_name"] = name
+                p["garment_type"] = garments.garment_type(name)  # upper / lower / full
+                p["is_outer_layer"] = name in garments.OUTER_LAYERS
+                p["embedding_chunk"] = key
+                payloads.append(p)
             c0 = time.time()
             store.upsert(client, ch.ids, ch.vectors, payloads, args.collection)
             state["chunks"][key] = {**fingerprint, "count": len(ch.ids)}

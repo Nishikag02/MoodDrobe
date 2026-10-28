@@ -1,4 +1,4 @@
-# Catalogue search: Qdrant index, search API, evaluation
+# Catalogue search and style recommendations
 
 These steps reuse the FashionCLIP vectors already saved in
 `data/processed/catalogue_embeddings/full_catalogue_v2`. None of them re-runs
@@ -101,10 +101,54 @@ Run the API (`uvicorn main:app --reload`) and try it at http://localhost:8000/do
 
 Each search response includes `timings_ms` (embedding and search time).
 
+### Style recommendations (more than "same category")
+
+| Route | What it does |
+| --- | --- |
+| `POST /recommend` | Form fields: `files` (1 image, or up to 8 for a moodboard), optional `steer` text ("more formal", "in black"), `liked_ids` / `disliked_ids` (comma-separated), `k`, `diversity` (0 to 0.9, default 0.3). |
+| `POST /recommend/for-you` | `{"liked_ids": [...], "disliked_ids": [...], "k": 12}`: suggestions from a user's likes. |
+| `GET /recommend/similar/{product_id}` | "More like this" and "complete the look" for a product the user clicked. |
+
+A `/recommend` response has these sections:
+
+- `your_style`: items that share the look across different garment types.
+  Picked with MMR (match the look, but not near-copies of each other) and at
+  most 3 per category. `diversity` controls the balance.
+- `complete_the_look`: only for a single garment photo. Top -> bottoms,
+  bottom -> tops, dress or full outfit -> outer layers, in the same style.
+- `closest_matches`: the 6 nearest items ("find this exact piece").
+- `detected`: what the photo seems to show (`garment_type`, `category`,
+  `confidence`), guessed from its nearest catalogue items.
+- `style_tags`: top 3 style words (e.g. "minimalist", "streetwear"), scored
+  zero-shot by FashionCLIP. Approximate, meant for display.
+
+For a moodboard, the images are averaged into one style vector, and each
+image's own neighbours are added to the candidates so every look on the board
+shows up. Liked items pull the style towards them; disliked items push away.
+
+Garment types come from DeepFashion's `list_category_cloth.txt` (read from
+`data/raw/deepfashion` if present, otherwise a built-in copy). They are stored
+in Qdrant at ingestion, so **if you ingested before this change, re-run
+`python -m scripts.ingest_qdrant --force` once.**
+
+To measure what recommendations add over plain search:
+
+```powershell
+python -m scripts.evaluate_recommendations
+```
+
+It compares plain nearest neighbours with `your_style` at several diversity
+settings: similarity to the query, variety (distinct categories, garment
+types, intra-list diversity), same-category share, latency, and how often the
+garment type is detected correctly. There is no "goes well together" ground
+truth in DeepFashion, so outfit compatibility needs a small user study.
+
 ## 5. Express
 
 `backend` forwards these as `/api/recommendations/image`,
-`/api/recommendations/text` and `/api/recommendations/catalogue-image/:id`.
+`/api/recommendations/text`, `/api/recommendations/catalogue-image/:id`,
+`/api/recommendations/style` (multipart, forwarded to `/recommend`),
+`/api/recommendations/for-you` and `/api/recommendations/similar/:id`.
 Set `ML_SERVICE_URL` in `backend/.env` if FastAPI is not on
 `http://localhost:8000`.
 

@@ -15,11 +15,15 @@ function clampK(value: unknown): number {
 type SearchResult = { product_id: string; image_url?: string; [key: string]: unknown };
 
 async function forwardJson(res: Response, upstream: globalThis.Response) {
-  const body = (await upstream.json().catch(() => ({ detail: "Invalid response from ML service" }))) as { results?: unknown };
+  const body = (await upstream.json().catch(() => ({ detail: "Invalid response from ML service" }))) as Record<string, unknown>;
   // Point image links at this server, so the browser never calls the ML service directly.
-  if (Array.isArray(body.results)) {
-    for (const r of body.results as SearchResult[]) {
-      r.image_url = `/api/recommendations/catalogue-image/${encodeURIComponent(r.product_id)}`;
+  // Covers plain search ("results") and every recommendation section.
+  for (const value of Object.values(body as Record<string, unknown>)) {
+    if (!Array.isArray(value)) continue;
+    for (const r of value as SearchResult[]) {
+      if (r && typeof r === "object" && typeof r.product_id === "string") {
+        r.image_url = `/api/recommendations/catalogue-image/${encodeURIComponent(r.product_id)}`;
+      }
     }
   }
   res.status(upstream.status).json(body);
@@ -64,6 +68,70 @@ recommendationsRouter.post("/text", express.json(), async (req: Request, res: Re
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ query, k: clampK(req.body?.k), category: req.body?.category ?? null }),
     });
+    await forwardJson(res, upstream);
+  } catch {
+    res.status(502).json({ detail: "ML service is not reachable." });
+  }
+});
+
+// POST /api/recommendations/style
+// Style suggestions, complete-the-look and moodboards. Send multipart/form-data
+// exactly as FastAPI's /recommend expects: one to eight "files", optional
+// "steer" text, "liked_ids", "disliked_ids", "k", "diversity". Forwarded as-is.
+recommendationsRouter.post(
+  "/style",
+  express.raw({ type: "multipart/form-data", limit: 8 * MAX_IMAGE_BYTES }),
+  async (req: Request, res: Response) => {
+    const type = req.get("content-type") ?? "";
+    if (!type.startsWith("multipart/form-data") || !Buffer.isBuffer(req.body)) {
+      res.status(400).json({ detail: "Send multipart/form-data with one or more 'files'." });
+      return;
+    }
+    try {
+      const upstream = await fetch(`${ML_SERVICE_URL}/recommend`, {
+        method: "POST",
+        headers: { "Content-Type": type },
+        body: new Uint8Array(req.body),
+      });
+      await forwardJson(res, upstream);
+    } catch {
+      res.status(502).json({ detail: "ML service is not reachable." });
+    }
+  },
+);
+
+// POST /api/recommendations/for-you  { "liked_ids": [...], "disliked_ids": [...], "k": 12 }
+// Later this should read the signed-in user's likes from Postgres instead of the body.
+recommendationsRouter.post("/for-you", express.json(), async (req: Request, res: Response) => {
+  const liked = Array.isArray(req.body?.liked_ids) ? req.body.liked_ids.map(String) : [];
+  if (liked.length === 0) {
+    res.status(400).json({ detail: "liked_ids is required" });
+    return;
+  }
+  const disliked = Array.isArray(req.body?.disliked_ids) ? req.body.disliked_ids.map(String) : [];
+  try {
+    const upstream = await fetch(`${ML_SERVICE_URL}/recommend/for-you`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ liked_ids: liked, disliked_ids: disliked, k: clampK(req.body?.k) }),
+    });
+    await forwardJson(res, upstream);
+  } catch {
+    res.status(502).json({ detail: "ML service is not reachable." });
+  }
+});
+
+// GET /api/recommendations/similar/:productId  -> "more like this" + "complete the look"
+recommendationsRouter.get("/similar/:productId", async (req: Request, res: Response) => {
+  const productId = String(req.params.productId);
+  if (!/^[\w.-]+$/.test(productId)) {
+    res.status(400).json({ detail: "Bad product id" });
+    return;
+  }
+  try {
+    const upstream = await fetch(
+      `${ML_SERVICE_URL}/recommend/similar/${encodeURIComponent(productId)}?k=${clampK(req.query.k)}`,
+    );
     await forwardJson(res, upstream);
   } catch {
     res.status(502).json({ detail: "ML service is not reachable." });

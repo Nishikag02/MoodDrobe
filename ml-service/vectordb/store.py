@@ -14,7 +14,7 @@ from . import config
 # point ID. This is what makes re-running ingestion safe (idempotent).
 POINT_NAMESPACE = uuid.UUID("6f1c2a52-6d6f-4f64-9a1e-6d6f6f644472")
 
-PAYLOAD_INDEX_FIELDS = ("category", "dataset_split", "subcategory", "color", "pattern")
+PAYLOAD_INDEX_FIELDS = ("category", "category_name", "garment_type", "dataset_split", "subcategory", "color", "pattern")
 
 
 def point_id(product_id: str) -> str:
@@ -45,6 +45,7 @@ def ensure_collection(client: QdrantClient, name: str = config.QDRANT_COLLECTION
     if not config.QDRANT_PATH:  # payload indexes only matter on a Qdrant server
         for field_name in PAYLOAD_INDEX_FIELDS:
             client.create_payload_index(name, field_name, models.PayloadSchemaType.KEYWORD)
+        client.create_payload_index(name, "is_outer_layer", models.PayloadSchemaType.BOOL)
     return True
 
 
@@ -64,8 +65,15 @@ def upsert(client: QdrantClient, ids: list[str], vectors: np.ndarray, payloads: 
 
 
 def build_filter(category: str | None = None, include_splits: list[str] | None = None,
-                 exclude_splits: list[str] | None = None) -> models.Filter | None:
+                 exclude_splits: list[str] | None = None, garment_types: list[str] | None = None,
+                 outer_layers_only: bool = False, exclude_ids: list[str] | None = None) -> models.Filter | None:
     must, must_not = [], []
+    if garment_types:
+        must.append(models.FieldCondition(key="garment_type", match=models.MatchAny(any=garment_types)))
+    if outer_layers_only:
+        must.append(models.FieldCondition(key="is_outer_layer", match=models.MatchValue(value=True)))
+    if exclude_ids:
+        must_not.append(models.HasIdCondition(has_id=[point_id(i) for i in exclude_ids]))
     if category:
         must.append(models.FieldCondition(key="category", match=models.MatchValue(value=category)))
     if include_splits:
@@ -78,8 +86,12 @@ def build_filter(category: str | None = None, include_splits: list[str] | None =
 
 
 def search(vector, k: int = 12, query_filter: models.Filter | None = None,
-           client: QdrantClient | None = None, name: str = config.QDRANT_COLLECTION) -> list[dict]:
-    """Nearest catalogue items for one 512-d query vector."""
+           client: QdrantClient | None = None, name: str = config.QDRANT_COLLECTION,
+           with_vectors: bool = False) -> list[dict]:
+    """Nearest catalogue items for one 512-d query vector.
+
+    with_vectors=True adds each item's stored vector under "vector" (used for re-ranking).
+    """
     client = client or get_client()
     res = client.query_points(
         collection_name=name,
@@ -87,11 +99,26 @@ def search(vector, k: int = 12, query_filter: models.Filter | None = None,
         limit=k,
         query_filter=query_filter,
         with_payload=True,
+        with_vectors=with_vectors,
     )
-    return [
-        {"product_id": (p.payload or {}).get("product_id"), "score": float(p.score), **(p.payload or {})}
-        for p in res.points
-    ]
+    out = []
+    for p in res.points:
+        item = {"product_id": (p.payload or {}).get("product_id"), "score": float(p.score), **(p.payload or {})}
+        if with_vectors and p.vector is not None:
+            item["vector"] = np.asarray(p.vector, dtype=np.float32)
+        out.append(item)
+    return out
+
+
+def get_vectors(product_ids: list[str], client: QdrantClient | None = None,
+                name: str = config.QDRANT_COLLECTION) -> dict[str, np.ndarray]:
+    """Stored vectors for known products, {product_id: vector}. Unknown IDs are left out."""
+    if not product_ids:
+        return {}
+    client = client or get_client()
+    pts = client.retrieve(collection_name=name, ids=[point_id(i) for i in product_ids],
+                          with_payload=True, with_vectors=True)
+    return {p.payload["product_id"]: np.asarray(p.vector, dtype=np.float32) for p in pts if p.payload}
 
 
 def get_product(product_id: str, client: QdrantClient | None = None,

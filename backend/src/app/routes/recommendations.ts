@@ -121,6 +121,27 @@ recommendationsRouter.post("/for-you", express.json(), async (req: Request, res:
   }
 });
 
+// POST /api/recommendations/vibe  { "vibe": "old money", "k": 12, "tags": ["knit"] }
+recommendationsRouter.post("/vibe", express.json(), async (req: Request, res: Response) => {
+  const vibe = typeof req.body?.vibe === "string" ? req.body.vibe.trim() : "";
+  if (!vibe) {
+    res.status(400).json({ detail: "vibe is required, e.g. \"old money\"" });
+    return;
+  }
+  const tags = Array.isArray(req.body?.tags) ? req.body.tags.map(String).slice(0, 5) : [];
+  const likedIds = Array.isArray(req.body?.liked_ids) ? req.body.liked_ids.map(String) : [];
+  try {
+    const upstream = await fetch(`${ML_SERVICE_URL}/recommend/vibe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ vibe, tags, liked_ids: likedIds, k: clampK(req.body?.k) }),
+    });
+    await forwardJson(res, upstream);
+  } catch {
+    res.status(502).json({ detail: "ML service is not reachable." });
+  }
+});
+
 // GET /api/recommendations/similar/:productId  -> "more like this" + "complete the look"
 recommendationsRouter.get("/similar/:productId", async (req: Request, res: Response) => {
   const productId = String(req.params.productId);

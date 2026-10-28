@@ -9,8 +9,10 @@ garment. This module turns that into suggestions:
   (top -> bottoms, bottom -> tops, dress/full outfit -> outer layers).
 - closest_matches: the nearest items, for "find this exact piece".
 
-Inputs can be one image, a moodboard (several images), a text steer such as
-"more formal" or "in black", and liked/disliked product IDs.
+Inputs can be one image, a moodboard (several images), a vibe in words
+("old money"), a text steer such as "more formal" or "in black", and
+liked/disliked product IDs. Mood photos (scenery, rooms) are translated into
+vibe words first, see vibes.py.
 """
 
 from __future__ import annotations
@@ -21,16 +23,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import garments, store
-
-# Words used to describe the look of the query. FashionCLIP scores each one
-# against the image; this is zero-shot and approximate, meant for display.
-STYLE_TAGS = [
-    "minimalist", "streetwear", "bohemian", "vintage", "preppy", "athleisure", "formal office wear",
-    "romantic feminine", "edgy grunge", "casual everyday", "party glam", "summer beachwear",
-    "cozy winter knitwear", "denim casual", "elegant evening",
-]
-STYLE_PROMPT = "a photo of {} fashion"
+from . import garments, heads, store, vibes
 
 _TYPE_LABELS = {garments.UPPER: "top", garments.LOWER: "bottom", garments.FULL: "full outfit"}
 
@@ -43,6 +36,8 @@ def normalize(v: np.ndarray) -> np.ndarray:
 @dataclass
 class StyleQuery:
     image_vectors: list[np.ndarray] = field(default_factory=list)
+    text_vectors: list[np.ndarray] = field(default_factory=list)  # vibe words, e.g. "old money"
+    pair_vector: np.ndarray | None = None  # set when the input is one garment photo
     steer_vector: np.ndarray | None = None  # embedded text such as "more formal"
     steer_strength: float = 0.35
     liked_vectors: list[np.ndarray] = field(default_factory=list)
@@ -57,13 +52,14 @@ class StyleQuery:
         optional text steer nudges it in a direction.
         """
         parts = []
-        if self.image_vectors:
-            parts.append(normalize(np.mean([normalize(v) for v in self.image_vectors], axis=0)))
+        inputs = [normalize(v) for v in self.image_vectors + self.text_vectors]
+        if inputs:
+            parts.append(normalize(np.mean(inputs, axis=0)))
         if self.liked_vectors:
             liked = normalize(np.mean([normalize(v) for v in self.liked_vectors], axis=0))
-            parts.append(liked * (0.6 if self.image_vectors else 1.0))
+            parts.append(liked * (0.6 if inputs else 1.0))
         if not parts:
-            raise ValueError("Need at least one image or one liked item.")
+            raise ValueError("Need at least one image, a vibe, or one liked item.")
         q = np.sum(parts, axis=0)
         if self.disliked_vectors:
             q = q - 0.3 * normalize(np.mean([normalize(v) for v in self.disliked_vectors], axis=0))
@@ -73,7 +69,7 @@ class StyleQuery:
 
     def anchors(self) -> list[np.ndarray]:
         """The separate inputs, so a moodboard with two different looks keeps both."""
-        return [normalize(v) for v in (self.image_vectors or self.liked_vectors)]
+        return [normalize(v) for v in (self.image_vectors + self.text_vectors or self.liked_vectors)]
 
 
 def mmr(query: np.ndarray, candidates: list[dict], k: int, diversity: float = 0.3,
@@ -127,26 +123,6 @@ def detect_garment(neighbors: list[dict], top: int = 10) -> dict:
     return {"garment_type": gtype, "category": cat, "confidence": round(wt / total, 3)}
 
 
-def style_tags(vector: np.ndarray, embed_text: Callable[[str], np.ndarray], top: int = 3) -> list[dict]:
-    tag_vecs = _tag_vectors(embed_text)
-    sims = tag_vecs @ normalize(vector)
-    # Softmax with CLIP's usual temperature turns similarities into shares.
-    e = np.exp((sims - sims.max()) * 100)
-    probs = e / e.sum()
-    order = np.argsort(-probs)[:top]
-    return [{"tag": STYLE_TAGS[i], "score": round(float(probs[i]), 3)} for i in order]
-
-
-_TAG_CACHE: dict[int, np.ndarray] = {}
-
-
-def _tag_vectors(embed_text: Callable[[str], np.ndarray]) -> np.ndarray:
-    key = id(embed_text)
-    if key not in _TAG_CACHE:
-        _TAG_CACHE[key] = np.stack([normalize(embed_text(STYLE_PROMPT.format(t))) for t in STYLE_TAGS])
-    return _TAG_CACHE[key]
-
-
 def _clean(items: list[dict], reason: str) -> list[dict]:
     out = []
     for it in items:
@@ -158,10 +134,12 @@ def _clean(items: list[dict], reason: str) -> list[dict]:
 
 def recommend(query: StyleQuery, k: int = 12, diversity: float = 0.3, pool_size: int = 150,
               pair_with: bool = True, embed_text: Callable[[str], np.ndarray] | None = None,
-              base_filter_kwargs: dict | None = None) -> dict:
+              base_filter_kwargs: dict | None = None, must_have_tags: list[str] | None = None) -> dict:
     """Build all recommendation sections for one query."""
     base = dict(base_filter_kwargs or {})
     base.setdefault("exclude_ids", query.exclude_ids or None)
+    if must_have_tags:
+        base["tags"] = must_have_tags
     q = query.style_vector()
     anchors = query.anchors()
 
@@ -174,8 +152,11 @@ def recommend(query: StyleQuery, k: int = 12, diversity: float = 0.3, pool_size:
     candidates = sorted(pool.values(), key=lambda c: -float(c["vector"] @ q))
 
     closest = candidates[: min(6, k)]
-    detected = detect_garment(store.search(anchors[0], k=10, query_filter=store.build_filter(**base))) \
-        if query.image_vectors else None
+    model = heads.load()
+    detected = None
+    if query.pair_vector is not None:
+        detected = model.detect(query.pair_vector) if model else \
+            detect_garment(store.search(query.pair_vector, k=10, query_filter=store.build_filter(**base)))
 
     result = {
         "your_style": _clean(mmr(q, candidates, k, diversity, max_per_category=3, anchors=anchors),
@@ -185,7 +166,7 @@ def recommend(query: StyleQuery, k: int = 12, diversity: float = 0.3, pool_size:
     }
 
     # Pair only when there is a single garment photo and we are fairly sure what it is.
-    if pair_with and detected and len(query.image_vectors) == 1 and detected["confidence"] >= 0.5:
+    if pair_with and detected and detected["confidence"] >= 0.5:
         comp = garments.complementary_types(detected["garment_type"])
         if comp == ["outer"]:
             flt = store.build_filter(outer_layers_only=True, **base)
@@ -200,8 +181,7 @@ def recommend(query: StyleQuery, k: int = 12, diversity: float = 0.3, pool_size:
             )
 
     if embed_text is not None:
-        try:
-            result["style_tags"] = style_tags(q, embed_text)
-        except Exception:
-            result["style_tags"] = []
+        result["vibes"] = vibes.describe(q, embed_text)
+    if model is not None and model.has_attrs:
+        result["attributes"] = model.describe(query.pair_vector if query.pair_vector is not None else q)
     return result

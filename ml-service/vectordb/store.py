@@ -14,7 +14,7 @@ from . import config
 # point ID. This is what makes re-running ingestion safe (idempotent).
 POINT_NAMESPACE = uuid.UUID("6f1c2a52-6d6f-4f64-9a1e-6d6f6f644472")
 
-PAYLOAD_INDEX_FIELDS = ("category", "category_name", "garment_type", "dataset_split", "subcategory", "color", "pattern")
+PAYLOAD_INDEX_FIELDS = ("category", "category_name", "garment_type", "tags", "dataset_split", "subcategory", "color", "pattern")
 
 
 def point_id(product_id: str) -> str:
@@ -66,8 +66,11 @@ def upsert(client: QdrantClient, ids: list[str], vectors: np.ndarray, payloads: 
 
 def build_filter(category: str | None = None, include_splits: list[str] | None = None,
                  exclude_splits: list[str] | None = None, garment_types: list[str] | None = None,
-                 outer_layers_only: bool = False, exclude_ids: list[str] | None = None) -> models.Filter | None:
+                 outer_layers_only: bool = False, exclude_ids: list[str] | None = None,
+                 tags: list[str] | None = None) -> models.Filter | None:
     must, must_not = [], []
+    for tag in tags or []:  # every tag must be present
+        must.append(models.FieldCondition(key="tags", match=models.MatchValue(value=tag)))
     if garment_types:
         must.append(models.FieldCondition(key="garment_type", match=models.MatchAny(any=garment_types)))
     if outer_layers_only:

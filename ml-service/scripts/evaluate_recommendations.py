@@ -77,7 +77,7 @@ def main() -> int:
             true_cat = garments.category_name(products[qid].get("category"))
             true_type = garments.garment_type(true_cat)
             t = time.perf_counter()
-            rec = recommend.recommend(recommend.StyleQuery(image_vectors=[q_vecs[i]]), k=args.k,
+            rec = recommend.recommend(recommend.StyleQuery(image_vectors=[q_vecs[i]], pair_vector=q_vecs[i]), k=args.k,
                                       diversity=d, base_filter_kwargs=base)
             times.append((time.perf_counter() - t) * 1000)
             items = rec["your_style"]

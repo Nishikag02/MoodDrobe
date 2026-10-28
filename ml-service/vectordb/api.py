@@ -22,12 +22,13 @@ from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
-from . import catalogue, config, recommend, store
+from . import catalogue, config, recommend, store, vibes
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 PUBLIC_FIELDS = ("product_id", "category", "category_name", "garment_type", "subcategory", "color",
                  "pattern", "dataset_split")
 MAX_MOODBOARD_IMAGES = 8
+CLOTHING_MATCH_SCORE = 0.8  # cosine similarity to the nearest catalogue item
 
 
 class ForYouRequest(BaseModel):
@@ -36,6 +37,14 @@ class ForYouRequest(BaseModel):
     steer: str | None = Field(default=None, max_length=200)
     k: int = Field(default=12, ge=1, le=50)
     diversity: float = Field(default=0.3, ge=0.0, le=0.9)
+
+
+class VibeRequest(BaseModel):
+    vibe: str = Field(min_length=1, max_length=200, description='e.g. "old money", "rainy day in Paris"')
+    liked_ids: list[str] = Field(default_factory=list, max_length=200)
+    tags: list[str] = Field(default_factory=list, max_length=5)
+    k: int = Field(default=12, ge=1, le=50)
+    diversity: float = Field(default=0.35, ge=0.0, le=0.9)
 
 
 class TextSearch(BaseModel):
@@ -58,7 +67,7 @@ def _public(results: list[dict]) -> list[dict]:
 
 
 def _public_sections(rec: dict) -> dict:
-    return {key: (_public(val) if isinstance(val, list) and key != "style_tags" else val)
+    return {key: (_public(val) if isinstance(val, list) and key not in ("vibes", "attributes") else val)
             for key, val in rec.items()}
 
 
@@ -123,9 +132,10 @@ def create_search_router(
         return {"results": _public(results),
                 "timings_ms": {"embed": round(embed_ms, 1), "search": round(search_ms, 1)}}
 
-    def _run_recommend(query: recommend.StyleQuery, k: int, diversity: float):
+    def _run_recommend(query: recommend.StyleQuery, k: int, diversity: float, tags: list[str] | None = None):
         try:
-            return recommend.recommend(query, k=k, diversity=diversity, embed_text=embed_text)
+            return recommend.recommend(query, k=k, diversity=diversity, embed_text=embed_text,
+                                       must_have_tags=tags or None)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except HTTPException:
@@ -144,26 +154,62 @@ def create_search_router(
         disliked_ids: str | None = Form(None, description="comma-separated product IDs the user disliked"),
         k: int = Form(12, ge=1, le=50),
         diversity: float = Form(0.3, ge=0.0, le=0.9, description="0 = closest only, higher = more variety"),
+        tags: str | None = Form(None, description='comma-separated attributes every result must have, e.g. "floral"'),
+        mode: str = Form("auto", pattern="^(auto|clothing|mood)$",
+                         description="auto = detect per image; clothing / mood = treat every image that way"),
     ):
+        """Recommendations from clothing photos, mood photos (scenery, rooms, art) or a mix (moodboard)."""
         if len(files) > MAX_MOODBOARD_IMAGES:
             raise HTTPException(status_code=400, detail=f"At most {MAX_MOODBOARD_IMAGES} images.")
         images = [await _read_image(f) for f in files]
         t = time.perf_counter()
-        image_vecs = [await run_in_threadpool(embed_image, im) for im in images]
+        raw_vecs = [await run_in_threadpool(embed_image, im) for im in images]
         steer_vec = await run_in_threadpool(embed_text, steer.strip()) if steer and steer.strip() else None
+
+        # Mood photos are translated into vibe words first; clothing photos are used directly.
+        image_vecs, inputs = [], []
+        for f, v in zip(files, raw_vecs):
+            clothing, p = await run_in_threadpool(vibes.is_clothing_photo, v, embed_text)
+            if mode == "auto" and not clothing:
+                # Second opinion: a photo that closely matches a catalogue item is clothing.
+                nearest = await run_in_threadpool(store.search, v, 1)
+                clothing = bool(nearest) and nearest[0]["score"] >= CLOTHING_MATCH_SCORE
+            if mode != "auto":
+                clothing = mode == "clothing"
+            if clothing:
+                image_vecs.append(v)
+                inputs.append({"file": f.filename, "kind": "clothing", "clothing_probability": p})
+            else:
+                image_vecs.append(await run_in_threadpool(vibes.bridge, v, embed_text))
+                inputs.append({"file": f.filename, "kind": "mood", "clothing_probability": p,
+                               "read_as": await run_in_threadpool(vibes.describe, v, embed_text)})
         embed_ms = (time.perf_counter() - t) * 1000
+
         liked, disliked = _split_ids(liked_ids), _split_ids(disliked_ids)
         stored = await run_in_threadpool(store.get_vectors, liked + disliked) if liked or disliked else {}
+        single_garment = len(raw_vecs) == 1 and inputs[0]["kind"] == "clothing"
         query = recommend.StyleQuery(
             image_vectors=image_vecs, steer_vector=steer_vec,
+            pair_vector=raw_vecs[0] if single_garment else None,
             liked_vectors=[stored[i] for i in liked if i in stored],
             disliked_vectors=[stored[i] for i in disliked if i in stored],
             exclude_ids=liked + disliked,
         )
         t = time.perf_counter()
-        rec = await run_in_threadpool(_run_recommend, query, k, diversity)
-        return {**_public_sections(rec),
+        rec = await run_in_threadpool(_run_recommend, query, k, diversity, _split_ids(tags))
+        return {"inputs": inputs, **_public_sections(rec),
                 "timings_ms": {"embed": round(embed_ms, 1), "recommend": round((time.perf_counter() - t) * 1000, 1)}}
+
+    @router.post("/recommend/vibe")
+    async def recommend_from_vibe(body: VibeRequest):
+        """Outfits for a vibe in words: "old money", "90s grunge", "rainy day in Paris"."""
+        text_vec = await run_in_threadpool(embed_text, vibes.text_query(body.vibe))
+        stored = await run_in_threadpool(store.get_vectors, body.liked_ids) if body.liked_ids else {}
+        query = recommend.StyleQuery(text_vectors=[text_vec],
+                                     liked_vectors=[stored[i] for i in body.liked_ids if i in stored],
+                                     exclude_ids=body.liked_ids)
+        rec = await run_in_threadpool(_run_recommend, query, body.k, body.diversity, body.tags)
+        return _public_sections(rec)
 
     @router.post("/recommend/for-you")
     async def recommend_for_user(body: ForYouRequest):
@@ -189,7 +235,8 @@ def create_search_router(
         stored = await run_in_threadpool(store.get_vectors, [product_id])
         if product_id not in stored:
             raise HTTPException(status_code=404, detail="Unknown product.")
-        query = recommend.StyleQuery(image_vectors=[stored[product_id]], exclude_ids=[product_id])
+        query = recommend.StyleQuery(image_vectors=[stored[product_id]], pair_vector=stored[product_id],
+                                     exclude_ids=[product_id])
         rec = await run_in_threadpool(_run_recommend, query, k, diversity)
         return _public_sections(rec)
 

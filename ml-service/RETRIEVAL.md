@@ -1,5 +1,7 @@
 # Catalogue search and style recommendations
 
+Step-by-step commands for everything: see `RUN_GUIDE.md`.
+
 These steps reuse the FashionCLIP vectors already saved in
 `data/processed/catalogue_embeddings/full_catalogue_v2`. None of them re-runs
 the model over the catalogue, and none of them edits or deletes chunk files.

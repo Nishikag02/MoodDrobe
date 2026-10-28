@@ -22,7 +22,7 @@ ML_ROOT = Path(__file__).resolve().parent.parent
 if str(ML_ROOT) not in sys.path:
     sys.path.insert(0, str(ML_ROOT))
 
-from vectordb import catalogue, config, garments, store  # noqa: E402
+from vectordb import catalogue, config, garments, heads, store  # noqa: E402
 
 PAYLOAD_FIELDS = ("product_id", "image_path", "category", "subcategory", "color", "pattern", "source", "dataset_split")
 
@@ -42,6 +42,9 @@ def main() -> int:
     print(f"Loading {args.products_csv} ...")
     products = catalogue.load_products(args.products_csv)
 
+    model = heads.load()
+    if model and model.has_attrs:
+        print("Attribute model found: adding predicted attribute tags to each product")
     client = store.get_client()
     if store.ensure_collection(client, args.collection):
         print(f"Created Qdrant collection '{args.collection}'")
@@ -69,12 +72,15 @@ def main() -> int:
                 print(f"  SKIP  {key}: {'; '.join(ch.errors)}")
                 continue
             payloads = []
-            for pid in ch.ids:
+            tags = model.tags(ch.vectors) if model and model.has_attrs else [None] * len(ch.ids)
+            for pid, item_tags in zip(ch.ids, tags):
                 p = {k: products[pid].get(k) for k in PAYLOAD_FIELDS}
                 name = garments.category_name(p.get("category"))
                 p["category_name"] = name
                 p["garment_type"] = garments.garment_type(name)  # upper / lower / full
                 p["is_outer_layer"] = name in garments.OUTER_LAYERS
+                if item_tags is not None:
+                    p["tags"] = item_tags  # predicted, e.g. ["floral", "chiffon", "sleeveless"]
                 p["embedding_chunk"] = key
                 payloads.append(p)
             c0 = time.time()

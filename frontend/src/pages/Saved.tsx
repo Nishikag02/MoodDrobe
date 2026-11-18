@@ -5,7 +5,7 @@ import { emptyFilters, recommendForYou, type Product, type Recommendation } from
 import { buildOutfits } from "@/lib/outfits"
 import { clearSaved, useSaved } from "@/lib/saved"
 import { OutfitBoard } from "@/components/mood/OutfitBoard"
-import { ProductCard } from "@/components/mood/ProductCard"
+import { ProductTile } from "@/components/mood/ProductTile"
 import { ProductDrawer } from "@/components/mood/ProductDrawer"
 import { Section } from "@/components/mood/Section"
 import { SiteHeader } from "@/components/mood/SiteHeader"
@@ -36,11 +36,11 @@ export default function Saved() {
   return (
     <div className="mood min-h-svh">
       <SiteHeader />
-      <main className="mx-auto max-w-6xl space-y-10 px-4 py-10 sm:px-6">
+      <main className="mx-auto max-w-[1400px] space-y-10 px-5 py-10 sm:px-8">
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <p className="text-[11px] font-semibold tracking-[0.2em] text-[var(--mood-accent)] uppercase">Your wardrobe board</p>
-            <h1 className="font-display text-5xl">Saved pieces</h1>
+            <h1 className="font-display text-6xl">Saved pieces</h1>
             <p className="text-[var(--mood-muted)]">
               Tap the heart on any item to keep it here. MoodDrobe learns your taste from what you save.
             </p>
@@ -51,7 +51,7 @@ export default function Saved() {
                 type="button"
                 onClick={forYou}
                 disabled={loading}
-                className="flex items-center gap-2 rounded-xl bg-[var(--mood-ink)] px-4 py-2.5 text-sm font-semibold text-[var(--mood-paper)] disabled:opacity-60"
+                className="flex items-center gap-2 rounded-xl bg-[var(--mood-ink)] px-4 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
               >
                 {loading ? <LoaderCircle className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
                 Style me from my saves
@@ -75,14 +75,14 @@ export default function Saved() {
             <Heart className="size-8 text-[var(--mood-accent)]" />
             <p className="font-display text-2xl">Nothing saved yet</p>
             <p className="max-w-sm text-sm text-[var(--mood-muted)]">Upload a vibe in the studio and save the pieces you love.</p>
-            <Link to="/" className="mt-2 rounded-full bg-[var(--mood-ink)] px-4 py-2 text-sm font-medium text-[var(--mood-paper)]">
+            <Link to="/" className="mt-2 rounded-full bg-[var(--mood-ink)] px-4 py-2 text-sm font-medium text-white">
               Go to the studio
             </Link>
           </div>
         ) : (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
             {saved.map((p, i) => (
-              <ProductCard key={p.product_id} product={p} onOpen={setOpen} compact index={i} />
+              <ProductTile key={p.product_id} product={p} onOpen={setOpen} index={i} />
             ))}
           </div>
         )}
@@ -112,18 +112,18 @@ export default function Saved() {
             </div>
             {outfits.length > 0 && (
               <Section title="Looks built from your taste">
-                <div className="grid gap-4 md:grid-cols-3">
+                <div className="space-y-4">
                   {outfits.map((o, i) => (
-                    <OutfitBoard key={o.pieces.map((p) => p.product_id).join()} outfit={o} n={i} onOpen={setOpen} />
+                    <OutfitBoard key={o.pieces.map((p) => p.product_id).join()} outfit={o} n={i} onOpen={setOpen} background={["#F7D9E0", "#EEDFCB", "#D7F0EA"][i % 3]} />
                   ))}
                 </div>
               </Section>
             )}
             {picks.length > 0 && (
               <Section title="More you'll like">
-                <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+                <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-6">
                   {picks.map((p, i) => (
-                    <ProductCard key={p.product_id} product={p} onOpen={setOpen} index={i} />
+                    <ProductTile key={p.product_id} product={p} onOpen={setOpen} index={i} />
                   ))}
                 </div>
               </Section>

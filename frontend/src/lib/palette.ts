@@ -58,3 +58,24 @@ export function inkOn(hex: string): string {
   const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
   return 0.299 * r + 0.587 * g + 0.114 * b > 150 ? "#1F1A17" : "#FFFFFF"
 }
+
+/** Blend a colour towards white: amount 0 = colour, 1 = white. */
+export function tint(hex: string, amount: number): string {
+  const n = parseInt(hex.replace("#", ""), 16)
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(c + (255 - c) * amount))
+  return toHex(ch[0], ch[1], ch[2])
+}
+
+/** The most colourful of the strongest swatches, so a grey wall doesn't win over the plants. */
+export function themeColour(swatches: { hex: string; weight?: number }[]): string | null {
+  if (!swatches.length) return null
+  const score = (h: string, w: number) => {
+    const n = parseInt(h.replace("#", ""), 16)
+    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
+    const max = Math.max(r, g, b), min = Math.min(r, g, b)
+    const sat = max === 0 ? 0 : (max - min) / max
+    const light = (max + min) / 510
+    return (0.25 + sat) * (0.4 + w) * (light > 0.12 && light < 0.92 ? 1 : 0.3)
+  }
+  return [...swatches].sort((a, b) => score(b.hex, b.weight ?? 0.2) - score(a.hex, a.weight ?? 0.2))[0].hex
+}

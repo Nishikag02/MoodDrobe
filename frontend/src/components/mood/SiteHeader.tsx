@@ -1,22 +1,31 @@
 import { Link, NavLink } from "react-router-dom"
 import { Heart } from "lucide-react"
-import { authClient } from "@/lib/auth-client"
-import { useSaved } from "@/lib/saved"
+import { useSaved, useSavedAccountSync } from "@/lib/saved"
+import { useCurrentUser } from "@/lib/session"
 import { cn } from "@/lib/utils"
 
 export type Health = "checking" | "online" | "offline"
 
-export function SiteHeader({ health, onCheck, onLogo }: { health?: Health; onCheck?: () => void; onLogo?: () => void }) {
+export type SearchMode = "vibe" | "lookalike"
+
+export function SiteHeader({ health, onCheck, onLogo, mode, onMode }: {
+  health?: Health
+  onCheck?: () => void
+  onLogo?: () => void
+  mode?: SearchMode
+  onMode?: (m: SearchMode) => void
+}) {
   const saved = useSaved()
-  const { data: session } = authClient.useSession()
+  const user = useCurrentUser()
+  useSavedAccountSync()
   const nav = ({ isActive }: { isActive: boolean }) =>
-    cn("rounded-full px-3 py-1 transition", isActive ? "bg-[var(--mood-ink)] text-[var(--mood-paper)]" : "hover:bg-[var(--mood-line)]")
+    cn("rounded-full px-3 py-1 transition", isActive ? "underline decoration-[3px] underline-offset-[6px] decoration-[var(--mood-accent)]" : "hover:bg-[var(--mood-line)]")
 
   return (
-    <header className="sticky top-0 z-40 border-b border-[var(--mood-line)] bg-[var(--mood-paper)]/90 backdrop-blur">
-      <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 py-3 sm:px-6">
-        <Link to="/" onClick={onLogo} className="font-display text-2xl font-semibold tracking-tight">
-          Mood<span className="text-[var(--mood-accent)]">Drobe</span>
+    <header className="sticky top-0 z-40 bg-[var(--mood-tint-soft)]/85 backdrop-blur transition-colors duration-700">
+      <div className="mx-auto flex max-w-[1400px] flex-wrap items-center gap-3 px-5 py-4 sm:px-8">
+        <Link to="/" onClick={onLogo} className="font-display text-[26px] !tracking-[-0.02em]">
+          MoodDrobe
         </Link>
         <nav className="ml-2 flex items-center gap-1 text-sm">
           <NavLink to="/" end className={nav}>
@@ -42,14 +51,31 @@ export function SiteHeader({ health, onCheck, onLogo }: { health?: Health; onChe
               {health === "online" ? "Model online" : health === "offline" ? "Model offline" : "Connecting…"}
             </button>
           )}
-          {session?.user ? (
+          {mode && onMode && (
+            <div className="flex rounded-full bg-[var(--mood-line)] p-1 text-sm" role="tablist" aria-label="Search mode">
+              {(["vibe", "lookalike"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="tab"
+                  aria-selected={mode === m}
+                  onClick={() => onMode(m)}
+                  title={m === "vibe" ? "Any picture: read its mood and style it" : "A clothing photo: find pieces that look like it"}
+                  className={cn("rounded-full px-3.5 py-1 font-medium transition", mode === m ? "bg-[var(--mood-ink)] text-white" : "hover:bg-white/60")}
+                >
+                  {m === "vibe" ? "Vibe" : "Look-alike"}
+                </button>
+              ))}
+            </div>
+          )}
+          {user ? (
             <Link to="/dashboard" className="max-w-32 truncate text-xs font-medium">
-              {session.user.name || session.user.email}
+              {user.name || user.email}
             </Link>
           ) : (
             <Link
               to="/login"
-              className="rounded-full border border-[var(--mood-ink)] px-3 py-1 text-xs font-medium hover:bg-[var(--mood-ink)] hover:text-[var(--mood-paper)]"
+              className="rounded-full border border-[var(--mood-ink)] px-3 py-1 text-xs font-medium hover:bg-[var(--mood-ink)] hover:text-white"
             >
               Sign in
             </Link>

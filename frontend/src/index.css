@@ -129,44 +129,63 @@
     }
 }
 /* ---------- MoodDrobe studio ---------- */
-.mood {
-    --mood-paper: #F6F1EA;
-    --mood-card: #FFFDF9;
-    --mood-ink: #1F1A17;
-    --mood-muted: #6E645C;
-    --mood-line: #E4DACD;
-    --mood-accent: #A9542F;
-    --mood-accent-soft: #F1DFD3;
-    --mood-good: #3F7A55;
-    background: var(--mood-paper);
-    color: var(--mood-ink);
+/* Loaded from Google Fonts; falls back to Geist offline. */
+@font-face {
+    font-family: "Bricolage Grotesque";
+    font-style: normal;
+    font-weight: 300 800;
+    font-stretch: 75% 100%;
+    font-display: swap;
+    src: url("https://fonts.gstatic.com/s/bricolagegrotesque/v9/3y996as8bTXq_nANBjzKo3IeZx8z6up5L-iNGQ.woff2") format("woff2");
 }
-.dark .mood {
-    --mood-paper: #171412;
-    --mood-card: #211D1A;
-    --mood-ink: #F3ECE4;
-    --mood-muted: #A89D93;
-    --mood-line: #3A332E;
-    --mood-accent: #E08A5E;
-    --mood-accent-soft: #3A2A21;
-    --mood-good: #7BC496;
+.mood {
+    --mood-paper: #F4EFF8;
+    --mood-card: #FFFFFF;
+    --mood-ink: #2A0B30;
+    --mood-muted: #6F5F74;
+    --mood-line: #E6DCEC;
+    --mood-accent: #EF4B3B;
+    --mood-accent-soft: #FBE3DF;
+    --mood-arch: #DCC6FA;
+    --mood-sun: #F8D15C;
+    --mood-good: #2F7A4F;
+    --mood-tint: #DCC6FA;     /* set from the uploaded image's palette */
+    --mood-tint-soft: #F4EFF8;
+    background: var(--mood-tint-soft);
+    color: var(--mood-ink);
+    transition: background-color 0.9s ease;
+    font-family: "Bricolage Grotesque", 'Geist Variable', sans-serif;
 }
 .font-display {
-    font-family: "Fraunces", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
-    font-optical-sizing: auto;
-    letter-spacing: -0.01em;
+    font-family: "Bricolage Grotesque", 'Geist Variable', sans-serif;
+    font-weight: 800;
+    font-stretch: 75%;
+    font-variation-settings: "wdth" 75, "opsz" 96;
+    letter-spacing: -0.035em;
+    line-height: 0.92;
 }
+.mood-arch { border-radius: 999px 999px 0 0; }
+.mood-pill { border-radius: 999px 999px 0 0; }
 @keyframes mood-shimmer {
-    0% { background-position: -400px 0; }
-    100% { background-position: 400px 0; }
+    0% { background-position: -600px 0; }
+    100% { background-position: 600px 0; }
 }
 .mood-shimmer {
-    background: linear-gradient(90deg, var(--mood-line) 0%, var(--mood-card) 50%, var(--mood-line) 100%);
-    background-size: 800px 100%;
-    animation: mood-shimmer 1.4s linear infinite;
+    background: linear-gradient(90deg, #F7D3DC 0%, #FCE3D2 40%, #F7D3DC 80%);
+    background-size: 1200px 100%;
+    animation: mood-shimmer 1.6s linear infinite;
 }
 @keyframes mood-rise {
-    from { opacity: 0; transform: translateY(8px); }
+    from { opacity: 0; transform: translateY(10px); }
     to { opacity: 1; transform: none; }
 }
-.mood-rise { animation: mood-rise 0.45s ease-out both; }
+.mood-rise { animation: mood-rise 0.5s cubic-bezier(.2,.7,.2,1) both; }
+@keyframes mood-bob {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+}
+.mood-bob { animation: mood-bob 5s ease-in-out infinite; }
+.mood-underline { box-shadow: inset 0 -4px 0 var(--mood-tint); display: inline-block; padding-bottom: 2px; }
+@media (prefers-reduced-motion: reduce) {
+    .mood-rise, .mood-bob, .mood-shimmer { animation: none; }
+}

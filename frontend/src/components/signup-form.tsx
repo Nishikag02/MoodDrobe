@@ -162,11 +162,13 @@ export function SignupForm({
             </FieldGroup>
           </form>
           <div className="relative hidden bg-muted md:block">
-            <img
-              src="/placeholder.svg"
-              alt="Image"
-              className="absolute inset-0 h-full w-full object-cover dark:brightness-[0.2] dark:grayscale"
-            />
+            <div className="mood absolute inset-0 flex items-end justify-center gap-3 overflow-hidden px-6 pt-10" aria-hidden="true">
+              <div className="mood-pill h-[45%] w-[18%] bg-[var(--mood-accent)]" />
+              <div className="mood-arch flex h-[80%] w-[46%] items-center justify-center bg-[var(--mood-arch)] p-4 text-center">
+                <span className="font-display text-3xl">Upload a vibe.</span>
+              </div>
+              <div className="mood-pill h-[62%] w-[18%] bg-[var(--mood-sun)]" />
+            </div>
           </div>
         </CardContent>
       </Card>

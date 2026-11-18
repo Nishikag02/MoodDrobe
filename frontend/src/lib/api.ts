@@ -82,7 +82,7 @@ async function handle<T>(res: Response): Promise<T> {
   } catch {
     /* not JSON */
   }
-  if (res.status === 502 || res.status === 504) detail = "The ML service isn't running. Start it with uvicorn on port 8000."
+  if (res.status === 502 || res.status === 504) detail = "The ML service isn't running. Start it with ml-service\\start_api.ps1 (port 8000)."
   throw new ApiError(detail, res.status)
 }
 
@@ -114,8 +114,9 @@ export async function health(): Promise<boolean> {
   }
 }
 
-export function recommendFromImages(files: File[], steer: string, f: Filters, k = 24): Promise<Recommendation> {
+export function recommendFromImages(files: File[], steer: string, f: Filters, k = 24, mode: "auto" | "clothing" | "mood" = "auto"): Promise<Recommendation> {
   const form = new FormData()
+  form.append("mode", mode)
   for (const file of files) form.append("files", file, file.name)
   if (steer.trim()) form.append("steer", steer.trim())
   form.append("k", String(k))

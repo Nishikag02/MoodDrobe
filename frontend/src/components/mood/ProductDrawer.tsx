@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react"
 import { LoaderCircle, X } from "lucide-react"
 import { similarTo, type Product, type Recommendation } from "@/lib/api"
-import { ProductCard, ProductImage } from "./ProductCard"
+import { ProductImage } from "./ProductCard"
+import { ProductTile } from "./ProductTile"
 import { SaveButton } from "./SaveButton"
 
 export function ProductDrawer({ product, onClose, onOpen }: {
@@ -103,7 +104,7 @@ export function ProductDrawer({ product, onClose, onOpen }: {
               <h3 className="font-display mb-2 text-lg">Complete the look</h3>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {pairs.slice(0, 8).map((p, i) => (
-                  <ProductCard key={p.product_id} product={p} onOpen={onOpen} compact index={i} />
+                  <ProductTile key={p.product_id} product={p} onOpen={onOpen} index={i} />
                 ))}
               </div>
             </section>
@@ -113,7 +114,7 @@ export function ProductDrawer({ product, onClose, onOpen }: {
               <h3 className="font-display mb-2 text-lg">More like this</h3>
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {similar.map((p, i) => (
-                  <ProductCard key={p.product_id} product={p} onOpen={onOpen} compact index={i} />
+                  <ProductTile key={p.product_id} product={p} onOpen={onOpen} index={i} />
                 ))}
               </div>
             </section>

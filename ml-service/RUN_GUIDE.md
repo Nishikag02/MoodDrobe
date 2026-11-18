@@ -266,3 +266,10 @@ use another address, set `ML_SERVICE_URL` in `backend\.env`.
 - `tags` filters return nothing: run step 3 with the attribute files, then step 4 with `--force`.
 - Everything is slow the first time: FashionCLIP loads on the first request
   (about 10 to 30 seconds). Later requests are fast.
+
+## Outfit compatibility for complete-the-look (optional)
+
+A model trained on Polyvore Outfits can rank complete-the-look suggestions by
+"goes with your piece" instead of "looks like it". Setup and results:
+`COMPATIBILITY.md`. Short version: request dataset access once, run
+`hf auth login`, then `powershell -ExecutionPolicy Bypass -File .\run_compat.ps1`.

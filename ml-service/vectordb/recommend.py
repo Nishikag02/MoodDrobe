@@ -28,7 +28,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import colors, garments, heads, store, vibes
+from . import colors, compat, garments, heads, store, vibes
 
 _TYPE_LABELS = {garments.UPPER: "top", garments.LOWER: "bottom", garments.FULL: "full outfit"}
 
@@ -169,6 +169,8 @@ class Explainer:
         lines = [reason[0].upper() + reason[1:]] if reason else []
         if "match" in item:
             lines.append(f"Style similarity {item['match']:.2f}")
+        if "compatibility" in item:
+            lines.append(f"Outfit compatibility {item['compatibility']:.2f} (learned from Polyvore outfits)")
         tags = set(item.get("tags") or [])
         asked = [t for t in self.required_tags if t in tags]
         if asked:
@@ -269,11 +271,16 @@ def recommend(query: StyleQuery, k: int = 12, diversity: float = 0.3, pool_size:
         else:
             flt = store.build_filter(garment_types=comp, **base)
         if comp:
-            pair_pool = store.search(q, k=pool_size, query_filter=flt, with_vectors=True)
+            # With a trained outfit-compatibility model (compat.py), look wider
+            # and rank by "goes with your piece" instead of "looks like it".
+            use_compat = compat.load() is not None and query.pair_vector is not None
+            pair_pool = store.search(q, k=pool_size * (2 if use_compat else 1), query_filter=flt,
+                                     with_vectors=True)
+            compat_rel = compat.rerank_scores(query.pair_vector, detected, pair_pool) if use_compat else None
             label = _TYPE_LABELS.get(detected["garment_type"], "piece")
             result["complete_the_look"] = _clean(
                 mmr(q, pair_pool, min(k, 8), diversity=0.4, max_per_category=2,
-                    color_query=color_query, color_weight=color_weight),
+                    color_query=color_query, color_weight=color_weight, relevance=compat_rel),
                 f"pairs with your {detected['category'] or label}", explainer,
             )
 

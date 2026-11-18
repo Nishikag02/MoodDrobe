@@ -31,6 +31,9 @@ export function SiteHeader({ health, onCheck, onLogo, mode, onMode }: {
           <NavLink to="/" end className={nav}>
             Studio
           </NavLink>
+          <NavLink to="/pinboard" className={nav}>
+            Pinboard
+          </NavLink>
           <NavLink to="/saved" className={nav}>
             <span className="flex items-center gap-1">
               <Heart className="size-3.5" /> Saved{saved.length > 0 && <span className="text-xs opacity-70">{saved.length}</span>}

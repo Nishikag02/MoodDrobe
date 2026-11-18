@@ -12,6 +12,7 @@ import {
   type Swatch,
 } from "@/lib/api"
 import { postHistory } from "@/lib/account"
+import { takeHandedOffImages } from "@/lib/handoff"
 import { buildOutfits } from "@/lib/outfits"
 import { useCurrentUser } from "@/lib/session"
 import { useSearchParams } from "react-router-dom"
@@ -134,6 +135,16 @@ export default function Studio() {
     },
     [files, previews, steer, mode, filters, run],
   )
+
+  // Images handed over from the pinboard start a moodboard search.
+  useEffect(() => {
+    const handed = takeHandedOffImages()
+    if (handed?.length) {
+      setParams({}, { replace: true })
+      addFiles(handed, true)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const onPaste = (e: ClipboardEvent) => {

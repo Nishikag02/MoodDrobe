@@ -134,6 +134,19 @@ python -m scripts.evaluate_recommendations
 
 Reports are saved in `data\processed\reports`.
 
+To compare similarity methods on the same test queries (cosine, standardised
+cosine, the category model's space, re-ranking with category / attributes /
+colours, the real Qdrant index, text queries, and plain CLIP against
+FashionCLIP on a 20k subset):
+
+```powershell
+python -m scripts.compare_methods --num-queries 1000 --text --clip-subset 20000
+```
+
+It prints one table (P@K, Recall, Hit, MRR, ms per query) and saves it as
+`method_comparison_*.md` and `.json`. The plain CLIP part downloads
+`openai/clip-vit-base-patch32` once and uses the GPU for a few minutes.
+
 ## 6. Start the API
 
 ```powershell

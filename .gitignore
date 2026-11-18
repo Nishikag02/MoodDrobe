@@ -27,3 +27,18 @@ data/processed/
 # OS
 .DS_Store
 Thumbs.db
+# MoodDrobe local data, models and tooling (never commit; DeepFashion/Polyvore are research-only)
+ml-service/data/
+ml-service/models/
+*.parquet
+*.safetensors
+*.patch
+*.bundle
+mooddrobe-recommendations.zip
+*.log
+logs/
+qdrant_storage/
+cloudflared*.exe
+
+# Local-only notes (demo login)
+*.local.txt

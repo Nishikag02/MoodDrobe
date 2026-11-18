@@ -128,3 +128,45 @@
     @apply font-sans;
     }
 }
+/* ---------- MoodDrobe studio ---------- */
+.mood {
+    --mood-paper: #F6F1EA;
+    --mood-card: #FFFDF9;
+    --mood-ink: #1F1A17;
+    --mood-muted: #6E645C;
+    --mood-line: #E4DACD;
+    --mood-accent: #A9542F;
+    --mood-accent-soft: #F1DFD3;
+    --mood-good: #3F7A55;
+    background: var(--mood-paper);
+    color: var(--mood-ink);
+}
+.dark .mood {
+    --mood-paper: #171412;
+    --mood-card: #211D1A;
+    --mood-ink: #F3ECE4;
+    --mood-muted: #A89D93;
+    --mood-line: #3A332E;
+    --mood-accent: #E08A5E;
+    --mood-accent-soft: #3A2A21;
+    --mood-good: #7BC496;
+}
+.font-display {
+    font-family: "Fraunces", "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+    font-optical-sizing: auto;
+    letter-spacing: -0.01em;
+}
+@keyframes mood-shimmer {
+    0% { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+}
+.mood-shimmer {
+    background: linear-gradient(90deg, var(--mood-line) 0%, var(--mood-card) 50%, var(--mood-line) 100%);
+    background-size: 800px 100%;
+    animation: mood-shimmer 1.4s linear infinite;
+}
+@keyframes mood-rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: none; }
+}
+.mood-rise { animation: mood-rise 0.45s ease-out both; }

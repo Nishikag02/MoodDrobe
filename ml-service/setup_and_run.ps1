@@ -4,7 +4,7 @@
 #   powershell -ExecutionPolicy Bypass -File .\setup_and_run.ps1
 #
 # It installs packages, checks the saved embeddings, starts Qdrant, trains the
-# category/attribute models, loads Qdrant, runs both evaluations, then starts
+# category/attribute models, extracts catalogue colours, loads Qdrant, runs both evaluations, then starts
 # the API. It never deletes or re-computes embeddings. It stops at the first
 # step that fails and tells you which one.
 #
@@ -68,6 +68,13 @@ if ($LocalQdrant) {
 
 Step "4/8 Train category + attribute models (minutes)"
 Run "train_heads" { python -m scripts.train_heads }
+
+Step "4b/8 Catalogue colours (resumable, skips finished parts)"
+if (Test-Path "data\raw\deepfashion\Img\img") {
+    Run "extract_colors" { python -m scripts.extract_colors }
+} else {
+    Write-Host "No photos in data\raw\deepfashion\Img\img: skipping colours (colour matching stays off)." -ForegroundColor Yellow
+}
 
 Step "5/8 Load vectors into Qdrant"
 python -m scripts.ingest_qdrant --force

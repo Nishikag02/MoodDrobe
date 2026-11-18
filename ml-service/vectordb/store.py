@@ -14,7 +14,8 @@ from . import config
 # point ID. This is what makes re-running ingestion safe (idempotent).
 POINT_NAMESPACE = uuid.UUID("6f1c2a52-6d6f-4f64-9a1e-6d6f6f644472")
 
-PAYLOAD_INDEX_FIELDS = ("category", "category_name", "garment_type", "tags", "dataset_split", "subcategory", "color", "pattern")
+PAYLOAD_INDEX_FIELDS = ("category", "category_name", "garment_type", "tags", "color_names", "dataset_split",
+                        "subcategory", "color", "pattern")
 
 
 def point_id(product_id: str) -> str:
@@ -31,6 +32,7 @@ def get_client() -> QdrantClient:
 def ensure_collection(client: QdrantClient, name: str = config.QDRANT_COLLECTION, dim: int = config.EMBEDDING_DIM) -> bool:
     """Create the collection if it does not exist. Returns True if created."""
     if client.collection_exists(name):
+        ensure_indexes(client, name)  # older collections may lack newer indexes (e.g. color_names)
         return False
     client.create_collection(
         collection_name=name,
@@ -42,11 +44,20 @@ def ensure_collection(client: QdrantClient, name: str = config.QDRANT_COLLECTION
             scalar=models.ScalarQuantizationConfig(type=models.ScalarType.INT8, always_ram=True)
         ),
     )
-    if not config.QDRANT_PATH:  # payload indexes only matter on a Qdrant server
-        for field_name in PAYLOAD_INDEX_FIELDS:
-            client.create_payload_index(name, field_name, models.PayloadSchemaType.KEYWORD)
-        client.create_payload_index(name, "is_outer_layer", models.PayloadSchemaType.BOOL)
+    ensure_indexes(client, name)
     return True
+
+
+def ensure_indexes(client: QdrantClient, name: str = config.QDRANT_COLLECTION) -> None:
+    """Payload indexes make filters fast. Only on a Qdrant server; adds the missing ones."""
+    if config.QDRANT_PATH:
+        return
+    have = set((client.get_collection(name).payload_schema or {}).keys())
+    for field_name in PAYLOAD_INDEX_FIELDS:
+        if field_name not in have:
+            client.create_payload_index(name, field_name, models.PayloadSchemaType.KEYWORD)
+    if "is_outer_layer" not in have:
+        client.create_payload_index(name, "is_outer_layer", models.PayloadSchemaType.BOOL)
 
 
 def upsert(client: QdrantClient, ids: list[str], vectors: np.ndarray, payloads: list[dict],
@@ -67,10 +78,15 @@ def upsert(client: QdrantClient, ids: list[str], vectors: np.ndarray, payloads: 
 def build_filter(category: str | None = None, include_splits: list[str] | None = None,
                  exclude_splits: list[str] | None = None, garment_types: list[str] | None = None,
                  outer_layers_only: bool = False, exclude_ids: list[str] | None = None,
-                 tags: list[str] | None = None) -> models.Filter | None:
+                 tags: list[str] | None = None, avoid_tags: list[str] | None = None,
+                 color_names: list[str] | None = None) -> models.Filter | None:
     must, must_not = [], []
     for tag in tags or []:  # every tag must be present
         must.append(models.FieldCondition(key="tags", match=models.MatchValue(value=tag)))
+    if avoid_tags:  # none of these
+        must_not.append(models.FieldCondition(key="tags", match=models.MatchAny(any=avoid_tags)))
+    if color_names:  # at least one of these colours
+        must.append(models.FieldCondition(key="color_names", match=models.MatchAny(any=color_names)))
     if garment_types:
         must.append(models.FieldCondition(key="garment_type", match=models.MatchAny(any=garment_types)))
     if outer_layers_only:

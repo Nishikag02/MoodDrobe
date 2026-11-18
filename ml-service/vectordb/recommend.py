@@ -13,6 +13,11 @@ Inputs can be one image, a moodboard (several images), a vibe in words
 ("old money"), a text steer such as "more formal" or "in black", and
 liked/disliked product IDs. Mood photos (scenery, rooms) are translated into
 vibe words first, see vibes.py.
+
+Colour matching: when query colours are given (from the uploaded photos, or
+typed as "navy, white" / hex codes), how well each item's dominant colours
+match them is added to its relevance, so on-palette items rise. Every result
+also carries a "why" list explaining the suggestion.
 """
 
 from __future__ import annotations
@@ -23,7 +28,7 @@ from typing import Callable
 
 import numpy as np
 
-from . import garments, heads, store, vibes
+from . import colors, garments, heads, store, vibes
 
 _TYPE_LABELS = {garments.UPPER: "top", garments.LOWER: "bottom", garments.FULL: "full outfit"}
 
@@ -72,21 +77,43 @@ class StyleQuery:
         return [normalize(v) for v in (self.image_vectors + self.text_vectors or self.liked_vectors)]
 
 
+def color_scores(items: list[dict], color_query: list[tuple[str, float]] | None) -> np.ndarray:
+    """0-1 colour match of each item to the query colours (0 for items without a palette)."""
+    if not color_query:
+        return np.zeros(len(items), dtype=np.float32)
+    return colors.similarity_matrix(color_query, [it.get("palette") or [] for it in items],
+                                    [it.get("palette_weights") or [] for it in items])
+
+
 def mmr(query: np.ndarray, candidates: list[dict], k: int, diversity: float = 0.3,
-        max_per_category: int | None = 3, anchors: list[np.ndarray] | None = None) -> list[dict]:
+        max_per_category: int | None = 3, anchors: list[np.ndarray] | None = None,
+        color_query: list[tuple[str, float]] | None = None, color_weight: float = 0.0,
+        relevance: np.ndarray | None = None) -> list[dict]:
     """Maximal Marginal Relevance: pick items that match the query but are not
     near-copies of items already picked. diversity=0 means plain ranking.
 
     Relevance is the average of similarity to the combined style vector and to
-    the closest single input image (anchor).
+    the closest single input image (anchor). With query colours, the colour
+    match is added: color_weight=1 lets colour move an item across the whole
+    style range of the candidate pool, 0 ignores colour. `relevance` (one score
+    per candidate, same order) replaces the style relevance, e.g. scores from
+    an outfit-compatibility model; colour is still added on top.
     """
-    pool = [c for c in candidates if "vector" in c]
+    keep = [i for i, c in enumerate(candidates) if "vector" in c]
+    pool = [candidates[i] for i in keep]
     if not pool:
         return []
     vecs = np.stack([normalize(c["vector"]) for c in pool])
     rel = vecs @ query
     if anchors and len(anchors) > 1:
         rel = 0.5 * rel + 0.5 * (vecs @ np.stack(anchors).T).max(axis=1)
+    style = rel.copy()
+    if relevance is not None:
+        rel = np.asarray(relevance, dtype=np.float32)[keep]
+    col = color_scores(pool, color_query)
+    if color_query and color_weight > 0:
+        spread = float(rel.max() - rel.min()) or 0.1
+        rel = rel + color_weight * spread * col
 
     chosen: list[int] = []
     per_cat: Counter = Counter()
@@ -105,7 +132,13 @@ def mmr(query: np.ndarray, candidates: list[dict], k: int, diversity: float = 0.
         chosen.append(best)
         per_cat[pool[best].get("category_name") or pool[best].get("category")] += 1
         max_sim = np.maximum(max_sim, vecs @ vecs[best])
-    return [{**pool[i], "match": round(float(rel[i]), 4)} for i in chosen]
+    out = []
+    for i in chosen:
+        item = {**pool[i], "match": round(float(style[i]), 4)}
+        if color_query:
+            item["color_match"] = round(float(col[i]), 3)
+        out.append(item)
+    return out
 
 
 def detect_garment(neighbors: list[dict], top: int = 10) -> dict:
@@ -123,45 +156,108 @@ def detect_garment(neighbors: list[dict], top: int = 10) -> dict:
     return {"garment_type": gtype, "category": cat, "confidence": round(wt / total, 3)}
 
 
-def _clean(items: list[dict], reason: str) -> list[dict]:
+@dataclass
+class Explainer:
+    """Builds the "why this was suggested" lines for each result."""
+    query_tags: list[str] = field(default_factory=list)  # predicted attributes of the query
+    required_tags: list[str] = field(default_factory=list)  # attributes the user asked for
+    color_query: list[tuple[str, float]] = field(default_factory=list)
+    query_vibes: list[str] = field(default_factory=list)
+    vibe_matrix: np.ndarray | None = None
+
+    def why(self, item: dict, reason: str) -> list[str]:
+        lines = [reason[0].upper() + reason[1:]] if reason else []
+        if "match" in item:
+            lines.append(f"Style similarity {item['match']:.2f}")
+        tags = set(item.get("tags") or [])
+        asked = [t for t in self.required_tags if t in tags]
+        if asked:
+            lines.append("Has what you asked for: " + ", ".join(asked))
+        shared = [t for t in self.query_tags if t in tags and t not in asked]
+        if shared:
+            lines.append("Same details as your inspiration: " + ", ".join(shared[:4]))
+        if self.color_query and item.get("palette"):
+            names = colors.matching_names(self.color_query, item["palette"])
+            if names:
+                lines.append("Matches your colours: " + ", ".join(names[:3]))
+        if self.vibe_matrix is not None and self.query_vibes and "vector" in item:
+            top = vibes.VIBES[int(np.argmax(self.vibe_matrix @ normalize(item["vector"])))][0]
+            if top in self.query_vibes:
+                lines.append(f"Fits the {top} vibe")
+        return lines
+
+
+def _clean(items: list[dict], reason: str, explainer: Explainer | None = None) -> list[dict]:
     out = []
     for it in items:
+        why = explainer.why(it, reason) if explainer else [reason]
         it = {k: v for k, v in it.items() if k != "vector"}
         it["reason"] = reason
+        it["why"] = why
         out.append(it)
     return out
 
 
 def recommend(query: StyleQuery, k: int = 12, diversity: float = 0.3, pool_size: int = 150,
               pair_with: bool = True, embed_text: Callable[[str], np.ndarray] | None = None,
-              base_filter_kwargs: dict | None = None, must_have_tags: list[str] | None = None) -> dict:
-    """Build all recommendation sections for one query."""
+              base_filter_kwargs: dict | None = None, must_have_tags: list[str] | None = None,
+              avoid_tags: list[str] | None = None, color_query: list[tuple[str, float]] | None = None,
+              color_weight: float = 0.5, only_colors: list[str] | None = None) -> dict:
+    """Build all recommendation sections for one query.
+
+    must_have_tags / avoid_tags: attribute filters ("floral", "sleeveless").
+    color_query: colours to match, [(hex, weight)]; color_weight: how strongly (0-1).
+    only_colors: colour names every result must contain (hard filter, e.g. ["navy"]).
+    """
     base = dict(base_filter_kwargs or {})
     base.setdefault("exclude_ids", query.exclude_ids or None)
     if must_have_tags:
         base["tags"] = must_have_tags
+    if avoid_tags:
+        base["avoid_tags"] = avoid_tags
+    if only_colors:
+        base["color_names"] = only_colors
     q = query.style_vector()
     anchors = query.anchors()
+    color_query = color_query or []
 
     # Candidate pool: neighbours of the combined vector plus of each input,
-    # so every look on a moodboard is represented.
+    # so every look on a moodboard is represented. When matching colours, also
+    # add the nearest items that contain those colours, so on-palette items exist.
     pool: dict[str, dict] = {}
-    for v in [q] + (anchors if len(anchors) > 1 else []):
-        for item in store.search(v, k=pool_size, query_filter=store.build_filter(**base), with_vectors=True):
+    searches = [(v, base) for v in [q] + (anchors if len(anchors) > 1 else [])]
+    if color_query and color_weight > 0 and not only_colors:
+        names = sorted({colors.color_name(h) for h, _ in color_query})
+        searches.append((q, {**base, "color_names": names}))
+    for v, flt in searches:
+        for item in store.search(v, k=pool_size, query_filter=store.build_filter(**flt), with_vectors=True):
             pool.setdefault(item["product_id"], item)
     candidates = sorted(pool.values(), key=lambda c: -float(c["vector"] @ q))
 
-    closest = candidates[: min(6, k)]
+    closest = [{**c, "match": round(float(normalize(c["vector"]) @ q), 4)} for c in candidates[: min(6, k)]]
+    if color_query:
+        for c, cs in zip(closest, color_scores(closest, color_query)):
+            c["color_match"] = round(float(cs), 3)
     model = heads.load()
     detected = None
     if query.pair_vector is not None:
         detected = model.detect(query.pair_vector) if model else \
             detect_garment(store.search(query.pair_vector, k=10, query_filter=store.build_filter(**base)))
 
+    focus = query.pair_vector if query.pair_vector is not None else q
+    explainer = Explainer(required_tags=list(must_have_tags or []), color_query=color_query)
+    if model is not None and model.has_attrs and (query.image_vectors or query.liked_vectors):
+        explainer.query_tags = model.tags(focus)[0]
+    query_vibes = vibes.describe(q, embed_text) if embed_text is not None else None
+    if query_vibes:
+        explainer.query_vibes = [v["vibe"] for v in query_vibes]
+        explainer.vibe_matrix = vibes.vibe_matrix(embed_text)
+
     result = {
-        "your_style": _clean(mmr(q, candidates, k, diversity, max_per_category=3, anchors=anchors),
-                             "shares the look of your inspiration"),
-        "closest_matches": _clean(closest, "closest visual match"),
+        "your_style": _clean(mmr(q, candidates, k, diversity, max_per_category=3, anchors=anchors,
+                                 color_query=color_query, color_weight=color_weight),
+                             "shares the look of your inspiration", explainer),
+        "closest_matches": _clean(closest, "closest visual match", explainer),
         "detected": detected,
     }
 
@@ -176,12 +272,15 @@ def recommend(query: StyleQuery, k: int = 12, diversity: float = 0.3, pool_size:
             pair_pool = store.search(q, k=pool_size, query_filter=flt, with_vectors=True)
             label = _TYPE_LABELS.get(detected["garment_type"], "piece")
             result["complete_the_look"] = _clean(
-                mmr(q, pair_pool, min(k, 8), diversity=0.4, max_per_category=2),
-                f"pairs with your {detected['category'] or label}",
+                mmr(q, pair_pool, min(k, 8), diversity=0.4, max_per_category=2,
+                    color_query=color_query, color_weight=color_weight),
+                f"pairs with your {detected['category'] or label}", explainer,
             )
 
-    if embed_text is not None:
-        result["vibes"] = vibes.describe(q, embed_text)
+    if query_vibes is not None:
+        result["vibes"] = query_vibes
     if model is not None and model.has_attrs:
-        result["attributes"] = model.describe(query.pair_vector if query.pair_vector is not None else q)
+        result["attributes"] = model.describe(focus)
+    if color_query:
+        result["query_colors"] = [{"hex": h, "weight": w, "name": colors.color_name(h)} for h, w in color_query]
     return result

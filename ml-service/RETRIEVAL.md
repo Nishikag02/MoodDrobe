@@ -145,6 +145,19 @@ types, intra-list diversity), same-category share, latency, and how often the
 garment type is detected correctly. There is no "goes well together" ground
 truth in DeepFashion, so outfit compatibility needs a small user study.
 
+### Colour matching, attribute filters and explanations
+
+`scripts/extract_colors.py` saves each product's dominant colours (the
+`main.py` method, cropped to the garment box). `ingest_qdrant.py` stores them
+as `palette`, `palette_weights` and `color_names`. When colours are given
+(`match_colors=true` for the uploaded photos, or `colors=navy,#F5F5F5`), each
+candidate's colour match (CIE Lab delta E, weighted by how much of the garment
+each colour covers) is added to its relevance before MMR, scaled by
+`color_weight` (0 to 1). `only_colors`, `tags` and `avoid_tags` are hard
+filters in Qdrant. Every result has a `why` list (style similarity, matching
+colours, requested and shared attributes, vibe). `GET /recommend/options`
+lists the attributes, colour names and vibes for the app's filter controls.
+
 ## 5. Express
 
 `backend` forwards these as `/api/recommendations/image`,
@@ -165,3 +178,4 @@ Set `ML_SERVICE_URL` in `backend/.env` if FastAPI is not on
 | `MOODDROBE_PRODUCTS_CSV` | `data/catalogue/metadata/products.csv` |
 | `MOODDROBE_RAW_DIR` | `data/raw/deepfashion` |
 | `MOODDROBE_CHUNK_SIZE` | `5000` |
+| `MOODDROBE_COLORS_DIR` | `data/processed/colors` |

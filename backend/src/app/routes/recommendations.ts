@@ -7,6 +7,19 @@ const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 
 export const recommendationsRouter: Router = Router();
 
+// Attribute and colour options shared by the JSON routes (see ml-service RUN_GUIDE.md).
+function filterOptions(body: Record<string, unknown> | undefined) {
+  const list = (v: unknown, max: number) => (Array.isArray(v) ? v.map(String).slice(0, max) : []);
+  const weight = Number(body?.color_weight ?? 0.5);
+  return {
+    tags: list(body?.tags, 5),
+    avoid_tags: list(body?.avoid_tags, 10),
+    colors: list(body?.colors, 5),
+    only_colors: list(body?.only_colors, 5),
+    color_weight: Number.isFinite(weight) ? Math.min(Math.max(weight, 0), 1) : 0.5,
+  };
+}
+
 function clampK(value: unknown): number {
   const k = Number(value ?? 12);
   return Number.isInteger(k) && k >= 1 && k <= 50 ? k : 12;
@@ -77,7 +90,8 @@ recommendationsRouter.post("/text", express.json(), async (req: Request, res: Re
 // POST /api/recommendations/style
 // Style suggestions, complete-the-look and moodboards. Send multipart/form-data
 // exactly as FastAPI's /recommend expects: one to eight "files", optional
-// "steer" text, "liked_ids", "disliked_ids", "k", "diversity". Forwarded as-is.
+// "steer" text, "liked_ids", "disliked_ids", "k", "diversity", "tags",
+// "avoid_tags", "match_colors", "colors", "color_weight", "only_colors". Forwarded as-is.
 recommendationsRouter.post(
   "/style",
   express.raw({ type: "multipart/form-data", limit: 8 * MAX_IMAGE_BYTES }),
@@ -113,7 +127,7 @@ recommendationsRouter.post("/for-you", express.json(), async (req: Request, res:
     const upstream = await fetch(`${ML_SERVICE_URL}/recommend/for-you`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ liked_ids: liked, disliked_ids: disliked, k: clampK(req.body?.k) }),
+      body: JSON.stringify({ liked_ids: liked, disliked_ids: disliked, k: clampK(req.body?.k), ...filterOptions(req.body) }),
     });
     await forwardJson(res, upstream);
   } catch {
@@ -121,20 +135,21 @@ recommendationsRouter.post("/for-you", express.json(), async (req: Request, res:
   }
 });
 
-// POST /api/recommendations/vibe  { "vibe": "old money", "k": 12, "tags": ["knit"] }
+// POST /api/recommendations/vibe
+// { "vibe": "old money", "k": 12, "tags": ["knit"], "avoid_tags": ["denim"],
+//   "colors": ["navy", "#F5F5F5"], "color_weight": 0.5, "only_colors": ["beige"] }
 recommendationsRouter.post("/vibe", express.json(), async (req: Request, res: Response) => {
   const vibe = typeof req.body?.vibe === "string" ? req.body.vibe.trim() : "";
   if (!vibe) {
     res.status(400).json({ detail: "vibe is required, e.g. \"old money\"" });
     return;
   }
-  const tags = Array.isArray(req.body?.tags) ? req.body.tags.map(String).slice(0, 5) : [];
   const likedIds = Array.isArray(req.body?.liked_ids) ? req.body.liked_ids.map(String) : [];
   try {
     const upstream = await fetch(`${ML_SERVICE_URL}/recommend/vibe`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ vibe, tags, liked_ids: likedIds, k: clampK(req.body?.k) }),
+      body: JSON.stringify({ vibe, liked_ids: likedIds, k: clampK(req.body?.k), ...filterOptions(req.body) }),
     });
     await forwardJson(res, upstream);
   } catch {
@@ -142,7 +157,18 @@ recommendationsRouter.post("/vibe", express.json(), async (req: Request, res: Re
   }
 });
 
-// GET /api/recommendations/similar/:productId  -> "more like this" + "complete the look"
+// GET /api/recommendations/options -> attributes, colour names and vibes the app can offer as filters
+recommendationsRouter.get("/options", async (_req: Request, res: Response) => {
+  try {
+    const upstream = await fetch(`${ML_SERVICE_URL}/recommend/options`);
+    await forwardJson(res, upstream);
+  } catch {
+    res.status(502).json({ detail: "ML service is not reachable." });
+  }
+});
+
+// GET /api/recommendations/similar/:productId?match_colors=true&tags=floral
+// -> "more like this" + "complete the look"
 recommendationsRouter.get("/similar/:productId", async (req: Request, res: Response) => {
   const productId = String(req.params.productId);
   if (!/^[\w.-]+$/.test(productId)) {
@@ -150,8 +176,12 @@ recommendationsRouter.get("/similar/:productId", async (req: Request, res: Respo
     return;
   }
   try {
+    const params = new URLSearchParams({ k: String(clampK(req.query.k)) });
+    for (const key of ["match_colors", "color_weight", "tags", "avoid_tags"]) {
+      if (typeof req.query[key] === "string") params.set(key, req.query[key] as string);
+    }
     const upstream = await fetch(
-      `${ML_SERVICE_URL}/recommend/similar/${encodeURIComponent(productId)}?k=${clampK(req.query.k)}`,
+      `${ML_SERVICE_URL}/recommend/similar/${encodeURIComponent(productId)}?${params}`,
     );
     await forwardJson(res, upstream);
   } catch {

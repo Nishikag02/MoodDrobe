@@ -15,7 +15,9 @@ turn the user's input (photo, moodboard, vibe words, likes) into one "style
 vector", find nearby catalogue items, then re-rank them so the results are
 varied and include pieces that pair with what was uploaded. Two small models
 trained on your saved vectors add the garment category and attributes
-(floral, denim, sleeveless and so on).
+(floral, denim, sleeveless and so on). Each product's dominant colours are
+saved too, so results can be re-ranked to "match these colours", and every
+result comes with a short "why this was suggested" list.
 
 ## Fastest way: one script
 
@@ -96,14 +98,32 @@ top-5; top/bottom/full-body accuracy; and attribute recall@3 and recall@5.
 These are the standard DeepFashion metrics, ready for your report. The model
 is saved to `data\processed\models\heads.npz`.
 
+## 3b. Extract the catalogue colours (CPU, about 20 to 40 minutes)
+
+Needs the DeepFashion photos in `data\raw\deepfashion\Img\img` and, for
+better crops, `list_bbox.txt` next to the other `list_*.txt` files.
+
+```powershell
+python -m scripts.extract_colors
+```
+
+It saves a 5-colour palette per product in `data\processed\colors`. You can
+stop it with Ctrl+C and run it again; finished parts are skipped. Quick test
+first: `python -m scripts.extract_colors --limit 2000` (then delete the
+`data\processed\colors` folder before the full run, so the test part is redone).
+This is the same dominant-colour method as `main.py`, with the background
+cropped away and the share of each colour kept.
+
 ## 4. Load everything into Qdrant
 
 ```powershell
 python -m scripts.ingest_qdrant --force
 ```
 
-`--force` re-uploads everything so each product also gets its garment type
-and predicted attribute tags. Without `--force`, it only adds new chunks.
+`--force` re-uploads everything so each product also gets its garment type,
+predicted attribute tags and colours. Without `--force`, it only adds new
+chunks. Run it with `--force` again whenever you re-train the models or
+re-extract colours.
 
 ## 5. Measure quality
 
@@ -153,7 +173,37 @@ Invoke-RestMethod -Method Post -Uri http://localhost:8000/recommend/vibe -Conten
 
 # "More like this" for a catalogue product
 Invoke-RestMethod http://localhost:8000/recommend/similar/<product_id>
+
+# Match the colours of the uploaded photo
+curl.exe -F "files=@outfit.jpg" -F "match_colors=true" http://localhost:8000/recommend
+
+# Match colours you choose (names or hex codes), and leave out denim
+curl.exe -F "files=@outfit.jpg" -F "colors=navy, #F5F5F5" -F "avoid_tags=denim" http://localhost:8000/recommend
+
+# Only floral, sleeveless pieces that contain beige
+Invoke-RestMethod -Method Post -Uri http://localhost:8000/recommend/vibe -ContentType "application/json" -Body '{"vibe": "summer picnic", "tags": ["floral", "sleeveless"], "only_colors": ["beige"]}'
+
+# "More like this" in the same colours
+Invoke-RestMethod "http://localhost:8000/recommend/similar/<product_id>?match_colors=true"
+
+# Everything the app can offer as filters (attributes, colour names, vibes)
+Invoke-RestMethod http://localhost:8000/recommend/options
 ```
+
+Colour and attribute options (work on `/recommend`, `/recommend/vibe` and
+`/recommend/for-you`):
+
+| Option | What it does |
+| --- | --- |
+| `match_colors=true` | Re-rank towards the colours of the uploaded photos (`/recommend` and `/recommend/similar`) |
+| `colors` | Colours to match instead: names (`navy`, `beige`) or hex (`#1F2A44`) |
+| `color_weight` | 0 to 1, default 0.5. How strongly colour counts against style |
+| `only_colors` | Hard filter: each result must contain one of these colour names |
+| `tags` | Hard filter: each result must have all these attributes (`floral`, `denim`) |
+| `avoid_tags` | Hard filter: leave out results with any of these attributes |
+
+Colour matching only re-orders; style still counts. A higher `color_weight`
+lets colour win more often.
 
 What comes back:
 
@@ -166,6 +216,17 @@ What comes back:
 | `detected` | Garment type and category of the photo |
 | `vibes` | Top vibe words for the overall look |
 | `attributes` | Predicted attributes (fabric, texture, shape, part, style) |
+| `query_colors` | The colours being matched (only when colour matching is on) |
+
+Each `inputs` entry also lists the photo's own `colors`, so the app can show
+swatches with a "match these colours" button. Each product in a section has:
+
+| Field | Meaning |
+| --- | --- |
+| `why` | Plain reasons, e.g. "Style similarity 0.82", "Matches your colours: navy, white", "Has what you asked for: floral", "Same details as your inspiration: chiffon", "Fits the old money vibe" |
+| `match` | Style similarity to your input (0 to 1) |
+| `color_match` | Colour match to the chosen colours (0 to 1), when colour matching is on |
+| `tags`, `color_names`, `palette` | The product's predicted attributes and colours |
 
 Mood photos (a beach, a cafe, a painting) don't look like clothes, so they
 are first described with vibe words ("coastal", "earthy") and then matched to
@@ -191,6 +252,7 @@ use another address, set `ML_SERVICE_URL` in `backend\.env`.
 | `POST /api/recommendations/vibe` | `/recommend/vibe` |
 | `POST /api/recommendations/for-you` | `/recommend/for-you` |
 | `GET /api/recommendations/similar/:id` | `/recommend/similar/{id}` |
+| `GET /api/recommendations/options` | `/recommend/options` |
 | `POST /api/recommendations/image`, `/text` | plain search |
 | `GET /api/recommendations/catalogue-image/:id` | product photo |
 
@@ -199,5 +261,8 @@ use another address, set `ML_SERVICE_URL` in `backend\.env`.
 - `Vector search unavailable`: Qdrant isn't running. Re-do step 2.
 - `Collection ... not found`: run step 4.
 - Out of memory during training: `python -m scripts.train_heads --max-train 80000`.
+- `color_match` is always 0, or `only_colors` returns nothing: colours are not
+  in Qdrant yet. Run step 3b, then step 4 with `--force`.
+- `tags` filters return nothing: run step 3 with the attribute files, then step 4 with `--force`.
 - Everything is slow the first time: FashionCLIP loads on the first request
   (about 10 to 30 seconds). Later requests are fast.

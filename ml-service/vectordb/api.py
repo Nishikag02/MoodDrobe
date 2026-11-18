@@ -22,16 +22,29 @@ from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, Field
 
-from . import catalogue, config, recommend, store, vibes
+from . import catalogue, colors, config, heads, recommend, store, vibes
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 PUBLIC_FIELDS = ("product_id", "category", "category_name", "garment_type", "subcategory", "color",
-                 "pattern", "dataset_split")
+                 "pattern", "dataset_split", "tags", "color_names", "palette")
+NOT_PRODUCT_LISTS = ("vibes", "attributes", "query_colors", "photo_colors")
 MAX_MOODBOARD_IMAGES = 8
 CLOTHING_MATCH_SCORE = 0.8  # cosine similarity to the nearest catalogue item
 
 
-class ForYouRequest(BaseModel):
+class Filters(BaseModel):
+    """Attribute and colour options shared by the JSON routes."""
+    tags: list[str] = Field(default_factory=list, max_length=5,
+                            description='attributes every result must have, e.g. ["floral", "sleeveless"]')
+    avoid_tags: list[str] = Field(default_factory=list, max_length=10, description='e.g. ["denim"]')
+    colors: list[str] = Field(default_factory=list, max_length=5,
+                              description='colours to match: names ("navy") or hex ("#1F2A44")')
+    color_weight: float = Field(default=0.5, ge=0.0, le=1.0, description="how strongly to match colours")
+    only_colors: list[str] = Field(default_factory=list, max_length=5,
+                                   description='every result must contain one of these colour names')
+
+
+class ForYouRequest(Filters):
     liked_ids: list[str] = Field(min_length=1, max_length=200)
     disliked_ids: list[str] = Field(default_factory=list, max_length=200)
     steer: str | None = Field(default=None, max_length=200)
@@ -39,10 +52,9 @@ class ForYouRequest(BaseModel):
     diversity: float = Field(default=0.3, ge=0.0, le=0.9)
 
 
-class VibeRequest(BaseModel):
+class VibeRequest(Filters):
     vibe: str = Field(min_length=1, max_length=200, description='e.g. "old money", "rainy day in Paris"')
     liked_ids: list[str] = Field(default_factory=list, max_length=200)
-    tags: list[str] = Field(default_factory=list, max_length=5)
     k: int = Field(default=12, ge=1, le=50)
     diversity: float = Field(default=0.35, ge=0.0, le=0.9)
 
@@ -59,7 +71,7 @@ def _public(results: list[dict]) -> list[dict]:
         item = {"product_id": r["product_id"], "score": round(r["score"], 4),
                 **{k: r.get(k) for k in PUBLIC_FIELDS if k != "product_id"},
                 "image_url": f"/catalogue/image/{r['product_id']}"}
-        for extra in ("reason", "match"):
+        for extra in ("reason", "why", "match", "color_match"):
             if extra in r:
                 item[extra] = r[extra]
         out.append(item)
@@ -67,8 +79,29 @@ def _public(results: list[dict]) -> list[dict]:
 
 
 def _public_sections(rec: dict) -> dict:
-    return {key: (_public(val) if isinstance(val, list) and key not in ("vibes", "attributes") else val)
+    return {key: (_public(val) if isinstance(val, list) and key not in NOT_PRODUCT_LISTS else val)
             for key, val in rec.items()}
+
+
+def _color_names(raw: list[str]) -> list[str]:
+    out = [c.strip().lower() for c in raw if c.strip()]
+    unknown = [c for c in out if c not in colors.COLOR_NAMES]
+    if unknown:
+        raise HTTPException(status_code=400, detail=f"Unknown colour name(s) {unknown}. "
+                                                    f"Use one of: {', '.join(colors.COLOR_NAMES)}")
+    return out
+
+
+def _filter_kwargs(tags: list[str], avoid_tags: list[str], color_list: list[str], color_weight: float,
+                   only_colors: list[str], fallback_colors: list[tuple[str, float]] | None = None) -> dict:
+    """Turn the request's attribute/colour options into recommend() arguments."""
+    try:
+        color_query = colors.parse(color_list) if color_list else (fallback_colors or [])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return {"must_have_tags": tags or None, "avoid_tags": avoid_tags or None,
+            "color_query": color_query or None, "color_weight": color_weight,
+            "only_colors": _color_names(only_colors) or None}
 
 
 async def _read_image(file: UploadFile) -> Image.Image:
@@ -132,10 +165,9 @@ def create_search_router(
         return {"results": _public(results),
                 "timings_ms": {"embed": round(embed_ms, 1), "search": round(search_ms, 1)}}
 
-    def _run_recommend(query: recommend.StyleQuery, k: int, diversity: float, tags: list[str] | None = None):
+    def _run_recommend(query: recommend.StyleQuery, k: int, diversity: float, options: dict | None = None):
         try:
-            return recommend.recommend(query, k=k, diversity=diversity, embed_text=embed_text,
-                                       must_have_tags=tags or None)
+            return recommend.recommend(query, k=k, diversity=diversity, embed_text=embed_text, **(options or {}))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except HTTPException:
@@ -155,13 +187,20 @@ def create_search_router(
         k: int = Form(12, ge=1, le=50),
         diversity: float = Form(0.3, ge=0.0, le=0.9, description="0 = closest only, higher = more variety"),
         tags: str | None = Form(None, description='comma-separated attributes every result must have, e.g. "floral"'),
+        avoid_tags: str | None = Form(None, description='comma-separated attributes to leave out, e.g. "denim"'),
         mode: str = Form("auto", pattern="^(auto|clothing|mood)$",
                          description="auto = detect per image; clothing / mood = treat every image that way"),
+        match_colors: bool = Form(False, description="re-rank towards the colours of the uploaded photos"),
+        colors_: str | None = Form(None, alias="colors",
+                                   description='colours to match instead, e.g. "navy, white" or "#1F2A44"'),
+        color_weight: float = Form(0.5, ge=0.0, le=1.0, description="how strongly to match colours"),
+        only_colors: str | None = Form(None, description='every result must contain one of these, e.g. "navy, white"'),
     ):
         """Recommendations from clothing photos, mood photos (scenery, rooms, art) or a mix (moodboard)."""
         if len(files) > MAX_MOODBOARD_IMAGES:
             raise HTTPException(status_code=400, detail=f"At most {MAX_MOODBOARD_IMAGES} images.")
         images = [await _read_image(f) for f in files]
+        palettes = [colors.palette(im) for im in images]
         t = time.perf_counter()
         raw_vecs = [await run_in_threadpool(embed_image, im) for im in images]
         steer_vec = await run_in_threadpool(embed_text, steer.strip()) if steer and steer.strip() else None
@@ -183,6 +222,8 @@ def create_search_router(
                 image_vecs.append(await run_in_threadpool(vibes.bridge, v, embed_text))
                 inputs.append({"file": f.filename, "kind": "mood", "clothing_probability": p,
                                "read_as": await run_in_threadpool(vibes.describe, v, embed_text)})
+        for item, pal in zip(inputs, palettes):
+            item["colors"] = [{"hex": h, "weight": w, "name": colors.color_name(h)} for h, w in pal]
         embed_ms = (time.perf_counter() - t) * 1000
 
         liked, disliked = _split_ids(liked_ids), _split_ids(disliked_ids)
@@ -196,7 +237,10 @@ def create_search_router(
             exclude_ids=liked + disliked,
         )
         t = time.perf_counter()
-        rec = await run_in_threadpool(_run_recommend, query, k, diversity, _split_ids(tags))
+        options = _filter_kwargs(_split_ids(tags), _split_ids(avoid_tags), _split_ids(colors_), color_weight,
+                                 _split_ids(only_colors),
+                                 fallback_colors=colors.merge(palettes) if match_colors else None)
+        rec = await run_in_threadpool(_run_recommend, query, k, diversity, options)
         return {"inputs": inputs, **_public_sections(rec),
                 "timings_ms": {"embed": round(embed_ms, 1), "recommend": round((time.perf_counter() - t) * 1000, 1)}}
 
@@ -208,7 +252,8 @@ def create_search_router(
         query = recommend.StyleQuery(text_vectors=[text_vec],
                                      liked_vectors=[stored[i] for i in body.liked_ids if i in stored],
                                      exclude_ids=body.liked_ids)
-        rec = await run_in_threadpool(_run_recommend, query, body.k, body.diversity, body.tags)
+        options = _filter_kwargs(body.tags, body.avoid_tags, body.colors, body.color_weight, body.only_colors)
+        rec = await run_in_threadpool(_run_recommend, query, body.k, body.diversity, options)
         return _public_sections(rec)
 
     @router.post("/recommend/for-you")
@@ -224,21 +269,41 @@ def create_search_router(
             disliked_vectors=[stored[i] for i in body.disliked_ids if i in stored],
             exclude_ids=body.liked_ids + body.disliked_ids,
         )
-        rec = await run_in_threadpool(_run_recommend, query, body.k, body.diversity)
+        options = _filter_kwargs(body.tags, body.avoid_tags, body.colors, body.color_weight, body.only_colors)
+        rec = await run_in_threadpool(_run_recommend, query, body.k, body.diversity, options)
         rec.pop("closest_matches", None)
         return _public_sections(rec)
 
     @router.get("/recommend/similar/{product_id}")
     async def recommend_similar(product_id: str, k: int = Query(12, ge=1, le=50),
-                                diversity: float = Query(0.3, ge=0.0, le=0.9)):
+                                diversity: float = Query(0.3, ge=0.0, le=0.9),
+                                match_colors: bool = Query(False, description="prefer this product's colours"),
+                                color_weight: float = Query(0.5, ge=0.0, le=1.0),
+                                tags: str | None = Query(None), avoid_tags: str | None = Query(None)):
         """"More like this" and "complete the look" for a catalogue product the user clicked."""
         stored = await run_in_threadpool(store.get_vectors, [product_id])
         if product_id not in stored:
             raise HTTPException(status_code=404, detail="Unknown product.")
+        own = None
+        if match_colors:
+            payload = await run_in_threadpool(store.get_product, product_id) or {}
+            own = list(zip(payload.get("palette") or [], payload.get("palette_weights") or []))
         query = recommend.StyleQuery(image_vectors=[stored[product_id]], pair_vector=stored[product_id],
                                      exclude_ids=[product_id])
-        rec = await run_in_threadpool(_run_recommend, query, k, diversity)
+        options = _filter_kwargs(_split_ids(tags), _split_ids(avoid_tags), [], color_weight, [], fallback_colors=own)
+        rec = await run_in_threadpool(_run_recommend, query, k, diversity, options)
         return _public_sections(rec)
+
+    @router.get("/recommend/options")
+    def recommend_options():
+        """Values the app can offer as filters: attributes, colour names and vibes."""
+        model = heads.load()
+        attrs = []
+        if model is not None and model.has_attrs:
+            attrs = [{"name": n, "type": t} for n, t in zip(model.attr_names, model.attr_types)]
+        return {"attributes": attrs,
+                "colors": [{"name": n, "hex": h} for n, h in colors.COLOR_NAMES.items()],
+                "vibes": [name for name, _ in vibes.VIBES]}
 
     @router.get("/catalogue/image/{product_id}")
     def catalogue_image(product_id: str):

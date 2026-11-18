@@ -18,6 +18,8 @@ EMBEDDINGS_DIR = Path(
 )
 RAW_DATA_DIR = Path(os.getenv("MOODDROBE_RAW_DIR", ML_ROOT / "data/raw/deepfashion"))
 REPORTS_DIR = Path(os.getenv("MOODDROBE_REPORTS_DIR", ML_ROOT / "data/processed/reports"))
+# Dominant-colour palettes of the catalogue (scripts/extract_colors.py)
+COLORS_DIR = Path(os.getenv("MOODDROBE_COLORS_DIR", ML_ROOT / "data/processed/colors"))
 
 EMBEDDING_DIM = 512
 CHUNK_SIZE = int(os.getenv("MOODDROBE_CHUNK_SIZE", "5000"))

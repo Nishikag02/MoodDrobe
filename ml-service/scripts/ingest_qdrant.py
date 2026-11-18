@@ -22,7 +22,7 @@ ML_ROOT = Path(__file__).resolve().parent.parent
 if str(ML_ROOT) not in sys.path:
     sys.path.insert(0, str(ML_ROOT))
 
-from vectordb import catalogue, config, garments, heads, store  # noqa: E402
+from vectordb import catalogue, colors, config, garments, heads, store  # noqa: E402
 
 PAYLOAD_FIELDS = ("product_id", "image_path", "category", "subcategory", "color", "pattern", "source", "dataset_split")
 
@@ -45,6 +45,11 @@ def main() -> int:
     model = heads.load()
     if model and model.has_attrs:
         print("Attribute model found: adding predicted attribute tags to each product")
+    palettes = colors.load_catalogue()
+    if palettes:
+        print(f"Colour palettes found for {len(palettes):,} products: adding colours to each product")
+    else:
+        print("No colour palettes yet (run python -m scripts.extract_colors to enable colour matching)")
     client = store.get_client()
     if store.ensure_collection(client, args.collection):
         print(f"Created Qdrant collection '{args.collection}'")
@@ -81,6 +86,11 @@ def main() -> int:
                 p["is_outer_layer"] = name in garments.OUTER_LAYERS
                 if item_tags is not None:
                     p["tags"] = item_tags  # predicted, e.g. ["floral", "chiffon", "sleeveless"]
+                if pid in palettes:
+                    hexes, weights = palettes[pid]
+                    p["palette"] = hexes  # e.g. ["#1F2A44", "#F5F5F5"], biggest first
+                    p["palette_weights"] = weights
+                    p["color_names"] = colors.names(list(zip(hexes, weights)))  # e.g. ["navy", "white"]
                 p["embedding_chunk"] = key
                 payloads.append(p)
             c0 = time.time()

@@ -229,8 +229,13 @@ swatches with a "match these colours" button. Each product in a section has:
 | `tags`, `color_names`, `palette` | The product's predicted attributes and colours |
 
 Mood photos (a beach, a cafe, a painting) don't look like clothes, so they
-are first described with vibe words ("coastal", "earthy") and then matched to
-clothes. If a photo is read the wrong way, send `mode=clothing` or
+are first recognised as a setting (16 settings, for example "cozy cafe" or
+"beach") and each setting has a "what to wear there" description ("cozy knit
+sweater and cardigan in warm earthy brown, beige and cream"). The search mixes
+that description (50%), the photo's top vibe words (30%) and the photo itself
+(20%), and by default also matches the scene's colours. Each mood photo in
+`inputs` shows `scene`, `scenes`, `fashion_reading` and `read_as`. Edit the
+settings in `SCENES` in `vectordb/vibes.py`; no retraining is needed. If a photo is read the wrong way, send `mode=clothing` or
 `mode=mood`. You can edit the vibe list in `vectordb/vibes.py`; no retraining
 is needed.
 

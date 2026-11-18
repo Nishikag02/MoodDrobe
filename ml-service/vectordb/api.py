@@ -190,7 +190,8 @@ def create_search_router(
         avoid_tags: str | None = Form(None, description='comma-separated attributes to leave out, e.g. "denim"'),
         mode: str = Form("auto", pattern="^(auto|clothing|mood)$",
                          description="auto = detect per image; clothing / mood = treat every image that way"),
-        match_colors: bool = Form(False, description="re-rank towards the colours of the uploaded photos"),
+        match_colors: bool | None = Form(None, description="re-rank towards the colours of the uploaded photos; "
+                                                           "default: on when a mood photo is uploaded"),
         colors_: str | None = Form(None, alias="colors",
                                    description='colours to match instead, e.g. "navy, white" or "#1F2A44"'),
         color_weight: float = Form(0.5, ge=0.0, le=1.0, description="how strongly to match colours"),
@@ -200,7 +201,6 @@ def create_search_router(
         if len(files) > MAX_MOODBOARD_IMAGES:
             raise HTTPException(status_code=400, detail=f"At most {MAX_MOODBOARD_IMAGES} images.")
         images = [await _read_image(f) for f in files]
-        palettes = [colors.palette(im) for im in images]
         t = time.perf_counter()
         raw_vecs = [await run_in_threadpool(embed_image, im) for im in images]
         steer_vec = await run_in_threadpool(embed_text, steer.strip()) if steer and steer.strip() else None
@@ -219,9 +219,13 @@ def create_search_router(
                 image_vecs.append(v)
                 inputs.append({"file": f.filename, "kind": "clothing", "clothing_probability": p})
             else:
-                image_vecs.append(await run_in_threadpool(vibes.bridge, v, embed_text))
-                inputs.append({"file": f.filename, "kind": "mood", "clothing_probability": p,
-                               "read_as": await run_in_threadpool(vibes.describe, v, embed_text)})
+                # Mood photo: recognise the setting (cafe, beach...), then search for what to wear there.
+                mood_vec, reading = await run_in_threadpool(vibes.interpret, v, embed_text)
+                image_vecs.append(mood_vec)
+                inputs.append({"file": f.filename, "kind": "mood", "clothing_probability": p, **reading})
+        # Clothing photos: colours of the garment (centre crop). Mood photos: colours of the whole scene.
+        palettes = [colors.palette(im) if item["kind"] == "clothing" else colors.palette(im, box=(0, 0, *im.size))
+                    for im, item in zip(images, inputs)]
         for item, pal in zip(inputs, palettes):
             item["colors"] = [{"hex": h, "weight": w, "name": colors.color_name(h)} for h, w in pal]
         embed_ms = (time.perf_counter() - t) * 1000
@@ -237,9 +241,10 @@ def create_search_router(
             exclude_ids=liked + disliked,
         )
         t = time.perf_counter()
+        use_colors = match_colors if match_colors is not None else any(i["kind"] == "mood" for i in inputs)
         options = _filter_kwargs(_split_ids(tags), _split_ids(avoid_tags), _split_ids(colors_), color_weight,
                                  _split_ids(only_colors),
-                                 fallback_colors=colors.merge(palettes) if match_colors else None)
+                                 fallback_colors=colors.merge(palettes) if use_colors else None)
         rec = await run_in_threadpool(_run_recommend, query, k, diversity, options)
         return {"inputs": inputs, **_public_sections(rec),
                 "timings_ms": {"embed": round(embed_ms, 1), "recommend": round((time.perf_counter() - t) * 1000, 1)}}

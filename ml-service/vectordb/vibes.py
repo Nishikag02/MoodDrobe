@@ -47,7 +47,46 @@ VIBE_TEMPLATE = "a photo of a {}"
 CLOTHING_PROMPTS = ["a photo of clothing", "a photo of a person wearing an outfit", "a product photo of a garment"]
 MOOD_PROMPTS = ["a photo of a landscape", "a photo of a room interior", "a photo of food",
                 "a photo of a city street with no people", "a painting or artwork", "a photo of nature",
-                "a photo of an object"]
+                "a photo of an object", "a photo of a shop or cafe interior", "a photo of bookshelves",
+                "a photo of buildings and architecture", "a photo of the sky"]
+
+# Places and settings for non-clothing photos: (name, how the photo looks, what to wear there).
+# The photo is matched to the second column; the third column is what gets searched.
+# Edit freely; no retraining needed.
+SCENES = [
+    ("cozy cafe", "a photo of a cozy coffee shop or cafe interior",
+     "cozy knit sweater and cardigan with relaxed trousers in warm earthy brown, beige and cream"),
+    ("bookstore", "a photo of a bookstore or library with bookshelves",
+     "vintage cardigan, tweed blazer and pleated skirt in muted brown, burgundy and olive"),
+    ("beach", "a photo of a sunny beach with sand and sea",
+     "breezy linen shirt, light sundress and shorts in white, sand and light blue"),
+    ("sunset", "a photo of a sunset sky over water",
+     "flowy summer dress in warm coral, orange and soft pink"),
+    ("mountains", "a photo of mountains and a mountain landscape",
+     "layered outdoor outfit with a jacket, warm knitwear and sturdy trousers in neutral tones"),
+    ("forest", "a photo of a green forest with trees",
+     "earthy utility jacket, cargo trousers and knitwear in olive green and brown"),
+    ("snowy winter", "a photo of snow in winter",
+     "warm wool coat, chunky knit sweater and scarf in cream, grey and camel"),
+    ("garden", "a photo of a flower garden",
+     "romantic floral dress and blouse in soft pastel colours"),
+    ("city street", "a photo of a city street with buildings",
+     "streetwear with a hoodie, jeans and an oversized jacket, casual urban layers"),
+    ("night city", "a photo of a city at night with lights",
+     "bold night out outfit in black with leather and shine"),
+    ("minimal architecture", "a photo of minimalist modern architecture or interior",
+     "minimalist tailored outfit in clean neutral black, white and grey"),
+    ("luxury dining", "a photo of an elegant restaurant or luxury hotel",
+     "elegant old money outfit with a blazer, silk blouse and tailored trousers in beige and navy"),
+    ("rainy day", "a photo of a rainy grey day",
+     "trench coat, dark jeans and a knit jumper in grey, navy and black"),
+    ("desert", "a photo of a sandy desert",
+     "loose linen layers in sand, beige and terracotta"),
+    ("artwork", "a painting or colourful artwork",
+     "artistic statement outfit with bold prints and colours"),
+    ("countryside", "a photo of green countryside fields and a farm",
+     "cottagecore floral prairie dress and cardigan in soft natural colours"),
+]
 
 _CACHE: dict[tuple[int, str], np.ndarray] = {}
 
@@ -98,6 +137,44 @@ def bridge(vector, embed_text, top: int = 3, keep_image: float = 0.35) -> np.nda
     w = probs[order] / probs[order].sum()
     text_part = _norm((w[:, None] * mat[order]).sum(axis=0))
     return _norm(keep_image * _norm(vector) + (1 - keep_image) * text_part)
+
+
+def scene_matrix(embed_text) -> np.ndarray:
+    return _texts(embed_text, "scenes", [p for _, p, _ in SCENES])
+
+
+def scene_outfit_matrix(embed_text) -> np.ndarray:
+    return _texts(embed_text, "scene_outfits", [VIBE_TEMPLATE.format(o) for _, _, o in SCENES])
+
+
+def describe_scene(vector, embed_text, top: int = 2) -> list[dict]:
+    """Which places/settings a photo shows: [{scene, score, outfit}], best first."""
+    probs = _softmax(scene_matrix(embed_text) @ _norm(vector))
+    order = np.argsort(-probs)[:top]
+    return [{"scene": SCENES[i][0], "score": round(float(probs[i]), 3), "outfit": SCENES[i][2]} for i in order]
+
+
+def interpret(vector, embed_text, keep_image: float = 0.2, scene_share: float = 0.5) -> tuple[np.ndarray, dict]:
+    """Turn a non-clothing photo into a clothing search vector, and say how it was read.
+
+    Mix of: what to wear in the recognised setting (scene_share), the photo's
+    top vibe words, and a little of the photo itself (colour and texture).
+    """
+    v = _norm(vector)
+    probs = _softmax(scene_matrix(embed_text) @ v)
+    order = np.argsort(-probs)[:2]
+    w = probs[order] / probs[order].sum()
+    scene_part = _norm((w[:, None] * scene_outfit_matrix(embed_text)[order]).sum(axis=0))
+    vibe_part = bridge(vector, embed_text, keep_image=0.0)
+    q = _norm(keep_image * v + scene_share * scene_part + (1 - keep_image - scene_share) * vibe_part)
+    top_scene = SCENES[int(order[0])]
+    reading = {
+        "scene": top_scene[0],
+        "scenes": describe_scene(vector, embed_text),
+        "fashion_reading": top_scene[2],
+        "read_as": describe(vector, embed_text),
+    }
+    return q, reading
 
 
 def text_query(vibe: str) -> str:

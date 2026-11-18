@@ -40,7 +40,7 @@ def list_chunk_files(embeddings_dir: Path = config.EMBEDDINGS_DIR, split: str | 
     for s in splits:
         folder = embeddings_dir / s
         if folder.is_dir():
-            files.extend(sorted(folder.glob("chunk_*.npz")))
+            files.extend(sorted(f for f in folder.glob("chunk_*.npz") if ".partial" not in f.name))
     return files
 
 

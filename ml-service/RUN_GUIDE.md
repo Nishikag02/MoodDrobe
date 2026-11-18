@@ -31,6 +31,20 @@ It sends a real test photo and two vibes, then prints what comes back.
 
 The steps below are the same thing done by hand.
 
+## New computer without embeddings or products.csv?
+
+Download DeepFashion (Category and Attribute Prediction) into
+`data\raw\deepfashion` so that images sit in `Img\img\...` and the `list_*.txt`
+files are next to `Img`. Then:
+
+```powershell
+python -m scripts.build_products_csv       # makes products.csv (289,222 rows)
+python -m scripts.embed_full_catalogue     # resumable; uses an NVIDIA GPU if present
+```
+
+Embedding speed measured on a 4-core cloud CPU: about 30 images per second,
+so roughly 3 hours for all 289k. A GPU is much faster.
+
 ## 0. Open the project
 
 ```powershell

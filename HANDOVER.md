@@ -149,3 +149,23 @@ Beginner-friendly PowerShell commands, complete code when replacing scripts, min
   - `POST /api/history` `{kind:'vibe'|'photo', text, scene?}` → 201 `{"item":{...}}`
   Tested with curl (demo cookie; test rows deleted afterwards). CORS for :5173 with credentials incl. DELETE preflight OK. Backend window restarted. Frontend wiring is left to the demo-app thread (frontend not edited).
 - 02:33 — Polyvore **disjoint** text files downloaded to `data\raw\polyvore_outfits\disjoint\`. ⏳ Training `train_compat --version disjoint --out data\processed\models\compat_disjoint.npz` with `MOODDROBE_REPORTS_DIR=data\processed\reports\disjoint` (so the live `compat.npz` and `compat_eval.json` are not touched); result copied to `data\processed\reports\compat_eval_disjoint.json`. Log `data\processed\logs\train_compat_disjoint.log`.
+
+## Showcase online (public link from this PC)
+Everything keeps running on this PC (GPU, Qdrant, Postgres); a **Cloudflare quick tunnel** gives one public https URL to the web app on :5173. Vite forwards `/ml` → :8000 and (once the frontend adds it) `/api` → :3000, so one URL covers the whole app.
+
+1. **Get cloudflared once** (55 MB, official): in the browser download https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe and save it as `C:\Users\Singh\Desktop\MoodDrobe\tools\cloudflared.exe` (git-ignored).
+2. Start Docker, the API (`start_api.ps1`), the backend (`pnpm dev` in backend) and the web app (`pnpm dev` in frontend) as usual.
+3. Start the tunnel in its own window:
+   `C:\Users\Singh\Desktop\MoodDrobe\tools\cloudflared.exe tunnel --url http://localhost:5173`
+   It prints a URL like `https://random-words.trycloudflare.com`. Share that.
+4. **The URL changes every time the tunnel restarts.** No account is needed; quick tunnels have no uptime guarantee.
+5. **Keep the PC on, plugged in and awake** (Settings → System → Power: screen/sleep "Never" while presenting). Closing the laptop lid or sleeping kills the link.
+6. **Fallback:** demo on http://localhost:5173 on this PC.
+
+Required code settings (status 02:45 IST):
+- Backend ✅ (`backend/src/lib/auth.ts`): `trustedOrigins` includes `https://*.trycloudflare.com` (+ optional `EXTRA_TRUSTED_ORIGINS` in backend/.env). Checked: sign-in with Origin `https://x.trycloudflare.com` → 200, unknown origin → 403.
+- Frontend (owned by the demo-app thread, not edited here):
+  - `frontend/vite.config.ts` → in `server` add `allowedHosts: ['.trycloudflare.com']` (otherwise Vite answers "Blocked request. This host is not allowed"), and a proxy `'/api': { target: 'http://127.0.0.1:3000' }` (no rewrite, keep the Origin header) next to `/ml`.
+  - `frontend/src/lib/auth-client.ts` → `baseURL` must be the page's own origin (e.g. `window.location.origin`) instead of `VITE_BACKEND_APP_URL=http://localhost:3000`; for a visitor's browser "localhost:3000" is their own computer, so login over the tunnel fails otherwise.
+- Cookies: the backend's cookies come back through the Vite proxy as host-only cookies for the tunnel domain; https at the edge is fine.
+- Security: the public URL exposes the whole app (sign-up, uploads). Stop the tunnel window (Ctrl+C) after the showcase.

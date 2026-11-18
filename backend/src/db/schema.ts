@@ -149,3 +149,42 @@ export const verification = pgTable(
     ).on(table.identifier),
   }),
 );
+// ---- MoodDrobe user data (saved items + search history) ----
+// Created by sql/0001_saved_items_user_history.sql (CREATE TABLE IF NOT EXISTS; never alters the auth tables).
+
+export const savedItems = pgTable(
+  "saved_items",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    productId: text("product_id").notNull(),
+    imageUrl: text("image_url"),
+    categoryName: text("category_name"),
+    source: text("source"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("saved_items_user_product_uidx").on(table.userId, table.productId),
+  ],
+);
+
+export const userHistory = pgTable(
+  "user_history",
+  {
+    id: text("id")
+      .primaryKey()
+      .$defaultFn(() => crypto.randomUUID()),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // 'vibe' | 'photo'
+    text: text("text").notNull(),
+    scene: text("scene"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("user_history_user_created_idx").on(table.userId, table.createdAt)],
+);

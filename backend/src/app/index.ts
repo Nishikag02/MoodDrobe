@@ -4,6 +4,7 @@ import type {Express} from 'express'
 import { toNodeHandler } from "better-auth/node";
 import { auth } from "../lib/auth.js";
 import { recommendationsRouter } from "./routes/recommendations.js";
+import { userDataRouter } from "./routes/user-data.js";
 
 export function expressApp() :Express{
     const app = express();
@@ -22,6 +23,9 @@ export function expressApp() :Express{
     app.use('/api/recommendations', recommendationsRouter);
 
     app.use(express.json());
+
+    // Saved items + search history for logged-in users (401 without a session)
+    app.use('/api', userDataRouter);
 
     // Routes
     app.get('/', (req, res) => {

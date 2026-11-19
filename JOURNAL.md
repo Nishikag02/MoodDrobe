@@ -1,4 +1,4 @@
-# MoodDrobe build journal — night of 18–19 Nov 2026
+# MoodDrobe build journal 
 
 Goal for the night: a working end-to-end demo on the team PC (RTX 3050 Laptop 4 GB, i5-11400H, 16 GB RAM) before the 8:00 AM IST evaluation. Upload an inspiration photo (outfit, café, beach, mountains…) or type a vibe, and get clothing recommendations from the DeepFashion catalogue that match its aesthetic.
 
